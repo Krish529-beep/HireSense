@@ -1,6 +1,6 @@
-import { useContext } from "react";
+import { useContext, useEffect } from "react";
 import { AuthContext } from "../auth.context";
-import { login, register, logout,  } from "../services/auth.api"
+import { login, register, logout, getMe } from "../services/auth.api"
 
 // Hook layer's main task is to maintain the flow
 export const useAuth = () => {
@@ -12,38 +12,57 @@ export const useAuth = () => {
         try {
             const data = await login({ email, password })
             setUser(data.user)
+            return true
         } catch (error) {
-            console.log(error);
-            
-        }finally{
-             setLoading(false)
+            console.log(error.response?.data?.message || error.message)
+            return false
+        } finally {
+            setLoading(false)
         }
     }
 
-    const handleRegister = async ({ username, email, password }) => {
+    const handleRegister = async (data) => {
         setLoading(true)
         try {
-            const data = await register({ username, email, password })
-            setUser(data.user)
+            const res = await register(data)
+            setUser(res.user)
+            return true
         } catch (error) {
-            console.log(error);
-            
-        }finally{
+            console.log(error.response?.data?.message || error.message)
+            return false
+        } finally {
             setLoading(false)
-        }   
+        }
     }
 
     const handelLogout = async () => {
         setLoading(true)
         try {
-             const data = await logout()
+            const data = await logout()
             setUser(null)
         } catch (error) {
-            console.log(error);   
-        }finally{
-             setLoading(false)
+            console.log(error);
+        } finally {
+            setLoading(false)
         }
     }
 
-    return { user, loading, handelLogin, handleRegister, handelLogout }
+    useEffect(() => {
+        const getAndSetUser = async () => {
+            try {
+                
+                const data = await getMe();
+                setUser(data.user);
+            } catch (error) {
+                setUser(null);
+            } finally {
+                setLoading(false);
+            }
+        };
+
+        getAndSetUser();
+    }, []);
+
+
+    return { user, loading, handelLogin, handleRegister, handelLogout, }
 }

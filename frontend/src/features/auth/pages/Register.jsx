@@ -9,20 +9,26 @@ function Register() {
 
     const { loading, handleRegister } = useAuth()
     const navigate = useNavigate()
-    const [email, setEmail] = useState()
-    const [password, setPassword] = useState()
-    const [username, setUsername] = useState()
+    const [email, setEmail] = useState("")
+    const [password, setPassword] = useState("")
+    const [username, setUsername] = useState("")
 
     const handleSubmit = async (e) => {
         e.preventDefault();
-        await handleRegister({ username, email, password })
-        navigate('/')
-    }
+
+        const success = await handleRegister({ username, email, password });
+
+        if (success) {
+            navigate('/');
+        } else {
+            alert("Registration failed");
+        }
+    };
 
     if (loading) {
         return (
             <main>
-                Loading
+                <h1>Loading</h1>
             </main>
         )
     }

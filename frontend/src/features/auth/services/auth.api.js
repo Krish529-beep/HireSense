@@ -1,7 +1,7 @@
 import axios from "axios"
 const api = axios.create({
     baseURL:"http://localhost:3000",
-    withCredentials:true
+    withCredentials: true
 })
 
 // by default axios does not give the access to set cookies so we use withcredentials true
@@ -37,7 +37,16 @@ export async function logout() {
         return response.data
 
     } catch (error) {
-        
+         console.log(error);
     }
 }
 
+export async function getMe(){
+    try {
+        const response = await api.get('/api/auth/get-me');
+        return response.data;
+    } catch (error) {
+        console.log(error.response?.data?.message || error.message);
+        throw error; 
+    }
+}
