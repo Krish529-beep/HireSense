@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="220" viewBox="0 0 720 220" fill="none">
+  <defs>
+    <linearGradient id="ring" x1="30" y1="20" x2="194" y2="190" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#58A5FF" />
+      <stop offset="1" stop-color="#75E2B2" />
+    </linearGradient>
+    <linearGradient id="core" x1="72" y1="64" x2="138" y2="156" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0E2131" />
+      <stop offset="1" stop-color="#09131F" />
+    </linearGradient>
+    <linearGradient id="textAccent" x1="292" y1="66" x2="600" y2="170" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F4F7FB" />
+      <stop offset="0.75" stop-color="#D9EEF4" />
+      <stop offset="1" stop-color="#75E2B2" />
+    </linearGradient>
+  </defs>
+
+  <rect x="20" y="20" width="180" height="180" rx="54" fill="#07111B" />
+  <rect x="28" y="28" width="164" height="164" rx="46" stroke="url(#ring)" stroke-width="6" stroke-opacity="0.75" />
+
+  <circle cx="110" cy="110" r="49" fill="url(#core)" stroke="url(#ring)" stroke-width="7" />
+  <path d="M87 81V139" stroke="#F4F7FB" stroke-width="12" stroke-linecap="round" />
+  <path d="M133 81V139" stroke="#F4F7FB" stroke-width="12" stroke-linecap="round" />
+  <path d="M87 110H133" stroke="url(#ring)" stroke-width="12" stroke-linecap="round" />
+  <circle cx="110" cy="110" r="8" fill="#75E2B2" />
+
+  <path d="M156 64L169 51" stroke="#58A5FF" stroke-width="8" stroke-linecap="round" />
+  <path d="M53 169L66 156" stroke="#75E2B2" stroke-width="8" stroke-linecap="round" />
+
+  <text x="244" y="108" fill="url(#textAccent)" font-family="Segoe UI, Inter, Arial, sans-serif" font-size="64" font-weight="700" letter-spacing="-1.5">
+    HireSense
+  </text>
+  <text x="248" y="146" fill="#8EA6B8" font-family="Segoe UI, Inter, Arial, sans-serif" font-size="24" font-weight="500" letter-spacing="3.8">
+    INTERVIEW PREP STUDIO
+  </text>
+</svg>
