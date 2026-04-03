@@ -1,5 +1,7 @@
 import {
     generateInterviewReport,
+    deleteInterviewReport,
+    generateResumePdf,
     getAllInterviewReports,
     getInterviewReportById
 } from "../services/interview.api.js";
@@ -57,5 +59,32 @@ export const useInterview = () => {
         }
     }, [setLoading, setReports])
 
-    return {loading,report,reports,generateReport,getReportById,getReports}
+    const removeReport = useCallback(async (interviewId) => {
+        setLoading(true)
+        try {
+            await deleteInterviewReport({ interviewId })
+            setReports((currentReports) => currentReports.filter((reportItem) => reportItem._id !== interviewId))
+            setReport((currentReport) => currentReport?._id === interviewId ? null : currentReport)
+        } catch (err) {
+            console.log(err);
+            throw err
+        } finally {
+            setLoading(false)
+        }
+    }, [setLoading, setReport, setReports])
+
+    const downloadResumePdf = useCallback(async (interviewId) => {
+        setLoading(true)
+        try {
+            const response = await generateResumePdf({ interviewId })
+            return response
+        } catch (err) {
+            console.log(err);
+            throw err
+        } finally {
+            setLoading(false)
+        }
+    }, [setLoading])
+
+    return {loading,report,reports,generateReport,getReportById,getReports,removeReport,downloadResumePdf}
 }

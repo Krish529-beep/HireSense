@@ -1,4 +1,5 @@
 const { GoogleGenAI } = require('@google/genai')
+const puppeteer = require('puppeteer')
 const { z } = require('zod')
 const { zodToJsonSchema } = require('zod-to-json-schema')
 // const {resume,selfdescribe,jobdescribe} = require('./temp.js')
@@ -13,6 +14,11 @@ const AI_MODEL_CANDIDATES = [
 ]
 const MAX_RETRIES_PER_MODEL = 2
 const RETRYABLE_STATUS_CODES = new Set([429, 500, 502, 503, 504])
+const DEFAULT_TECHNICAL_INTENTION = "Assess relevant technical knowledge for the role."
+const DEFAULT_TECHNICAL_ANSWER = "Give a structured, example-driven answer and explain tradeoffs."
+const DEFAULT_BEHAVIORAL_INTENTION = "Assess communication, ownership, and teamwork."
+const DEFAULT_BEHAVIORAL_ANSWER = "Use the STAR format with a concrete example and measurable outcome."
+const DEFAULT_PLAN_TASKS = ["Review fundamentals", "Practice targeted questions", "Revise project examples"]
 
 const interViewReportSchema = z.object({
     matchScore: z.number().describe("A score between 0 and 100 indicating how well the candidate's profile matches the job describe"),
@@ -83,6 +89,91 @@ function tryParseJsonString(value) {
     }
 }
 
+function stripWrappingQuotes(value) {
+    const text = toCleanString(value)
+    return text.replace(/^"+|"+$/g, "").trim()
+}
+
+function extractQuotedValue(text, key) {
+    if (typeof text !== "string") {
+        return ""
+    }
+
+    const patterns = [
+        new RegExp(`"${key}"\\s*:\\s*"([^"]+)"`, "i"),
+        new RegExp(`${key}"?\\s*:\\s*"([^"]+)"`, "i"),
+        new RegExp(`${key}\\s*:\\s*"([^"]+)"`, "i"),
+        new RegExp(`"${key}"\\s*:\\s*([^,}\\]]+)`, "i"),
+        new RegExp(`${key}\\s*:\\s*([^,}\\]]+)`, "i"),
+    ]
+
+    for (const pattern of patterns) {
+        const match = text.match(pattern)
+        if (match?.[1]) {
+            return stripWrappingQuotes(match[1])
+        }
+    }
+
+    return ""
+}
+
+function cleanupLabeledText(value, key, fallback = "") {
+    const text = toCleanString(value, fallback)
+    const parsedObject = tryParseJsonString(text)
+    if (parsedObject && typeof parsedObject === "object" && !Array.isArray(parsedObject)) {
+        return cleanupLabeledText(parsedObject[key] ?? text, key, fallback)
+    }
+
+    const extracted = extractQuotedValue(text, key)
+    if (extracted) {
+        return extracted
+    }
+
+    return text
+        .replace(new RegExp(`^"?${key}"?\\s*:\\s*`, "i"), "")
+        .replace(/^"+|"+$/g, "")
+        .replace(/[}",\]]+$/g, "")
+        .trim() || fallback
+}
+
+function extractTasksFromText(value) {
+    const text = toCleanString(value)
+    if (!text) {
+        return []
+    }
+
+    const arrayMatch = text.match(/"tasks"\s*:\s*\[([\s\S]*?)\]/i) || text.match(/tasks\s*:\s*\[([\s\S]*?)\]/i)
+    if (arrayMatch?.[1]) {
+        return arrayMatch[1]
+            .split(/","|",\s*"|",|"\s*,\s*"/)
+            .map((item) => stripWrappingQuotes(item))
+            .filter(Boolean)
+    }
+
+    return []
+}
+
+function extractLabeledEntries(text, keys) {
+    if (typeof text !== "string") {
+        return []
+    }
+
+    const pattern = /"(question|intention|answer|skill|severity|day|focus|tasks)"\s*:\s*("(?:[^"\\]|\\.)*"|\[[\s\S]*?\]|[^,\]}]+)/gi
+    const entries = []
+    let match = pattern.exec(text)
+
+    while (match) {
+        const key = match[1]
+        const value = stripWrappingQuotes(match[2])
+        if (keys.includes(key)) {
+            entries.push({ key, value })
+        }
+        match = pattern.exec(text)
+    }
+
+    return entries
+}
+
 function normalizeQuestionItem(item, index) {
     const parsedStringObject = tryParseJsonString(item)
     if (parsedStringObject && typeof parsedStringObject === "object" && !Array.isArray(parsedStringObject)) {
@@ -91,9 +182,9 @@ function normalizeQuestionItem(item, index) {
 
     if (item && typeof item === "object" && !Array.isArray(item)) {
         return {
-            question: toCleanString(item.question, `Question ${index + 1}`),
-            intention: toCleanString(item.intention, "Assess relevant knowledge and communication."),
-            answer: toCleanString(item.answer, "Give a structured answer with clear examples and outcomes."),
+            question: cleanupLabeledText(item.question, "question", `Question ${index + 1}`),
+            intention: cleanupLabeledText(item.intention, "intention", "Assess relevant knowledge and communication."),
+            answer: cleanupLabeledText(item.answer, "answer", "Give a structured answer with clear examples and outcomes."),
         }
     }
 
@@ -108,7 +199,7 @@ function normalizeQuestionItem(item, index) {
     }
 
     return {
-        question: text,
+        question: cleanupLabeledText(text, "question", `Question ${index + 1}`),
         intention: "Assess relevant knowledge and communication.",
         answer: "Give a structured answer with clear examples and outcomes.",
     }
@@ -123,14 +214,16 @@ function normalizeSkillGapItem(item) {
     if (item && typeof item === "object" && !Array.isArray(item)) {
         const severity = ["low", "medium", "high"].includes(item.severity) ? item.severity : "medium"
         return {
-            skill: toCleanString(item.skill, "Unspecified skill gap"),
+            skill: cleanupLabeledText(item.skill, "skill", "Unspecified skill gap"),
             severity,
         }
     }
 
+    const severity = extractQuotedValue(toCleanString(item), "severity")
+
     return {
-        skill: toCleanString(item, "Unspecified skill gap"),
-        severity: "medium",
+        skill: cleanupLabeledText(item, "skill", "Unspecified skill gap"),
+        severity: ["low", "medium", "high"].includes(severity) ? severity : "medium",
     }
 }
 
@@ -157,10 +250,11 @@ function normalizePreparationPlanItem(item, index) {
     }
 
     if (item && typeof item === "object" && !Array.isArray(item)) {
+        const extractedTasks = Array.isArray(item.tasks) ? item.tasks : extractTasksFromText(item.tasks)
         return {
             day: Number.isFinite(Number(item.day)) ? Number(item.day) : index + 1,
-            focus: toCleanString(item.focus, `Preparation Focus ${index + 1}`),
-            tasks: normalizePreparationTasks(item.tasks),
+            focus: cleanupLabeledText(item.focus, "focus", `Preparation Focus ${index + 1}`),
+            tasks: normalizePreparationTasks(extractedTasks.length > 0 ? extractedTasks : item.tasks),
         }
     }
 
@@ -176,8 +270,8 @@ function normalizePreparationPlanItem(item, index) {
 
     return {
         day: index + 1,
-        focus: text,
-        tasks: ["Review fundamentals", "Practice answering relevant questions", "Revise examples from past work"],
+        focus: cleanupLabeledText(text, "focus", `Preparation Focus ${index + 1}`),
+        tasks: normalizePreparationTasks(extractTasksFromText(text).length > 0 ? extractTasksFromText(text) : ["Review fundamentals", "Practice answering relevant questions", "Revise examples from past work"]),
     }
 }
 
@@ -191,68 +285,332 @@ function ensureMinimumArrayItems(items, factory, minimumCount) {
     return result
 }
 
+function isPlaceholderToken(value) {
+    const normalized = toCleanString(value).toLowerCase()
+    return [
+        "question",
+        "intention",
+        "answer",
+        "skill",
+        "severity",
+        "focus",
+        "tasks",
+        "day"
+    ].includes(normalized)
+}
+
+function extractObjectTriplets(items, keys) {
+    const cleanedItems = items
+        .map((item) => toCleanString(item))
+        .filter(Boolean)
+        .filter((item) => !isPlaceholderToken(item))
+
+    const grouped = []
+    for (let index = 0; index + keys.length - 1 < cleanedItems.length; index += keys.length) {
+        const entry = {}
+        keys.forEach((key, keyIndex) => {
+            entry[key] = cleanedItems[index + keyIndex]
+        })
+        grouped.push(entry)
+    }
+
+    return grouped
+}
+
+function extractPreparationItems(items) {
+    const cleanedItems = items
+        .map((item) => item)
+        .filter((item) => item !== null && item !== undefined)
+
+    const grouped = []
+    let current = null
+
+    for (const rawItem of cleanedItems) {
+        const text = toCleanString(rawItem)
+        if (!text || isPlaceholderToken(text)) {
+            continue
+        }
+
+        const parsedDay = Number(text)
+        if (Number.isFinite(parsedDay) && String(parsedDay) === text) {
+            if (current) {
+                grouped.push(current)
+            }
+            current = { day: parsedDay, focus: "", tasks: [] }
+            continue
+        }
+
+        if (!current) {
+            current = { day: grouped.length + 1, focus: "", tasks: [] }
+        }
+
+        if (!current.focus) {
+            current.focus = text
+            continue
+        }
+
+        current.tasks.push(text)
+    }
+
+    if (current) {
+        grouped.push(current)
+    }
+
+    return grouped
+}
+
+function isGenericQuestionLabel(value) {
+    return /^(technical|behavioral)\s+question\s+\d+$/i.test(toCleanString(value))
+}
+
+function isGenericSkillLabel(value) {
+    const text = toCleanString(value)
+    return /^skill gap\s+\d+$/i.test(text) || /^(relevant|unspecified) skill gap$/i.test(text)
+}
+
+function isGenericPlanFocus(value) {
+    return /^preparation focus\s+\d+$/i.test(toCleanString(value))
+}
+
+function hasMeaningfulQuestion(item, type) {
+    const defaultIntention = type === "technical" ? DEFAULT_TECHNICAL_INTENTION : DEFAULT_BEHAVIORAL_INTENTION
+    const defaultAnswer = type === "technical" ? DEFAULT_TECHNICAL_ANSWER : DEFAULT_BEHAVIORAL_ANSWER
+    const question = toCleanString(item.question)
+    const intention = toCleanString(item.intention)
+    const answer = toCleanString(item.answer)
+
+    return (
+        question.length >= 24 &&
+        !isGenericQuestionLabel(question) &&
+        !isPlaceholderToken(question) &&
+        intention.length >= 18 &&
+        intention !== defaultIntention &&
+        answer.length >= 24 &&
+        answer !== defaultAnswer
+    )
+}
+
+function hasMeaningfulSkillGap(item) {
+    const skill = toCleanString(item.skill)
+    return skill.length >= 6 && !isGenericSkillLabel(skill) && !isPlaceholderToken(skill)
+}
+
+function hasMeaningfulPlanDay(item) {
+    const focus = toCleanString(item.focus)
+    const tasks = Array.isArray(item.tasks) ? item.tasks.map((task) => toCleanString(task)).filter(Boolean) : []
+
+    return (
+        focus.length >= 10 &&
+        !isGenericPlanFocus(focus) &&
+        !isPlaceholderToken(focus) &&
+        tasks.length >= 2 &&
+        tasks.some((task) => !DEFAULT_PLAN_TASKS.includes(task) && task.length >= 12)
+    )
+}
+
+function assertReportQuality(report) {
+    const qualitySignals = {
+        title: toCleanString(report.title).length >= 4 && toCleanString(report.title) !== "Interview Preparation Plan",
+        technicalQuestions: report.technicalQuestions.filter((item) => hasMeaningfulQuestion(item, "technical")).length,
+        behavioralQuestions: report.behavioralQuestions.filter((item) => hasMeaningfulQuestion(item, "behavioral")).length,
+        skillGaps: report.skillGaps.filter(hasMeaningfulSkillGap).length,
+        preparationPlan: report.preparationPlan.filter(hasMeaningfulPlanDay).length,
+    }
+
+    const isReliable =
+        qualitySignals.title &&
+        qualitySignals.technicalQuestions >= 4 &&
+        qualitySignals.behavioralQuestions >= 3 &&
+        qualitySignals.skillGaps >= 2 &&
+        qualitySignals.preparationPlan >= 3
+
+    if (!isReliable) {
+        const qualityError = new Error("AI returned a low-quality interview report.")
+        qualityError.statusCode = 422
+        qualityError.details = qualitySignals
+        throw qualityError
+    }
+}
+
 function normalizeInterviewReport(raw) {
-    const technicalQuestions = Array.isArray(raw.technicalQuestions)
-        ? raw.technicalQuestions.map(normalizeQuestionItem)
+    const technicalQuestionSource = Array.isArray(raw.technicalQuestions)
+        ? raw.technicalQuestions
+        : []
+    const behavioralQuestionSource = Array.isArray(raw.behavioralQuestions)
+        ? raw.behavioralQuestions
+        : []
+    const skillGapSource = Array.isArray(raw.skillGaps)
+        ? raw.skillGaps
+        : []
+    const preparationPlanSource = Array.isArray(raw.preparationPlan)
+        ? raw.preparationPlan
         : []
 
-    const behavioralQuestions = Array.isArray(raw.behavioralQuestions)
-        ? raw.behavioralQuestions.map(normalizeQuestionItem)
-        : []
+    const technicalLabeledEntries = technicalQuestionSource.flatMap((item) => {
+        if (typeof item === "string") {
+            return extractLabeledEntries(item, ["question", "intention", "answer"])
+        }
 
-    const skillGaps = Array.isArray(raw.skillGaps)
-        ? raw.skillGaps.map(normalizeSkillGapItem)
-        : []
+        if (item && typeof item === "object") {
+            return ["question", "intention", "answer"].flatMap((key) =>
+                extractLabeledEntries(toCleanString(item[key]), ["question", "intention", "answer"])
+            )
+        }
 
-    const preparationPlan = Array.isArray(raw.preparationPlan)
-        ? raw.preparationPlan.map(normalizePreparationPlanItem)
-        : []
+        return []
+    })
+
+    const behavioralLabeledEntries = behavioralQuestionSource.flatMap((item) => {
+        if (typeof item === "string") {
+            return extractLabeledEntries(item, ["question", "intention", "answer"])
+        }
+
+        if (item && typeof item === "object") {
+            return ["question", "intention", "answer"].flatMap((key) =>
+                extractLabeledEntries(toCleanString(item[key]), ["question", "intention", "answer"])
+            )
+        }
+
+        return []
+    })
+
+    const skillLabeledEntries = skillGapSource.flatMap((item) => {
+        if (typeof item === "string") {
+            return extractLabeledEntries(item, ["skill", "severity"])
+        }
+
+        if (item && typeof item === "object") {
+            return ["skill", "severity"].flatMap((key) =>
+                extractLabeledEntries(toCleanString(item[key]), ["skill", "severity"])
+            )
+        }
+
+        return []
+    })
+
+    const planLabeledEntries = preparationPlanSource.flatMap((item) => {
+        if (typeof item === "string") {
+            return extractLabeledEntries(item, ["day", "focus", "tasks"])
+        }
+
+        if (item && typeof item === "object") {
+            return ["day", "focus", "tasks"].flatMap((key) =>
+                extractLabeledEntries(toCleanString(item[key]), ["day", "focus", "tasks"])
+            )
+        }
+
+        return []
+    })
+
+    const regroupQuestions = (entries) => {
+        const grouped = []
+        let current = {}
+
+        entries.forEach(({ key, value }) => {
+            if (key === "question" && (current.question || current.intention || current.answer)) {
+                grouped.push(normalizeQuestionItem(current, grouped.length))
+                current = {}
+            }
+
+            current[key] = value
+
+            if (current.question && current.intention && current.answer) {
+                grouped.push(normalizeQuestionItem(current, grouped.length))
+                current = {}
+            }
+        })
+
+        return grouped
+    }
+
+    const regroupSkills = (entries) => {
+        const grouped = []
+        let current = {}
+
+        entries.forEach(({ key, value }) => {
+            if (key === "skill" && (current.skill || current.severity)) {
+                grouped.push(normalizeSkillGapItem(current))
+                current = {}
+            }
+
+            current[key] = value
+
+            if (current.skill && current.severity) {
+                grouped.push(normalizeSkillGapItem(current))
+                current = {}
+            }
+        })
+
+        return grouped
+    }
+
+    const regroupPlan = (entries) => {
+        const grouped = []
+        let current = {}
+
+        entries.forEach(({ key, value }) => {
+            if (key === "day" && (current.day || current.focus || current.tasks)) {
+                grouped.push(normalizePreparationPlanItem(current, grouped.length))
+                current = {}
+            }
+
+            if (key === "tasks") {
+                current.tasks = extractTasksFromText(`tasks:[${value}]`)
+            } else {
+                current[key] = value
+            }
+        })
+
+        if (Object.keys(current).length > 0) {
+            grouped.push(normalizePreparationPlanItem(current, grouped.length))
+        }
+
+        return grouped
+    }
+
+    const technicalQuestions = technicalLabeledEntries.length >= 3
+        ? regroupQuestions(technicalLabeledEntries)
+        : technicalQuestionSource.every((item) => typeof item === "string")
+            ? extractObjectTriplets(technicalQuestionSource, ["question", "intention", "answer"]).map(normalizeQuestionItem)
+            : technicalQuestionSource.map(normalizeQuestionItem)
+
+    const behavioralQuestions = behavioralLabeledEntries.length >= 3
+        ? regroupQuestions(behavioralLabeledEntries)
+        : behavioralQuestionSource.every((item) => typeof item === "string")
+            ? extractObjectTriplets(behavioralQuestionSource, ["question", "intention", "answer"]).map(normalizeQuestionItem)
+            : behavioralQuestionSource.map(normalizeQuestionItem)
+
+    const skillGaps = skillLabeledEntries.length >= 2
+        ? regroupSkills(skillLabeledEntries)
+        : skillGapSource.every((item) => typeof item === "string")
+            ? extractObjectTriplets(skillGapSource, ["skill", "severity"]).map(normalizeSkillGapItem)
+            : skillGapSource.map(normalizeSkillGapItem)
+
+    const preparationPlan = planLabeledEntries.length >= 3
+        ? regroupPlan(planLabeledEntries)
+        : preparationPlanSource.every((item) => typeof item !== "object" || item === null)
+            ? extractPreparationItems(preparationPlanSource).map(normalizePreparationPlanItem)
+            : preparationPlanSource.map(normalizePreparationPlanItem)
 
     return {
         title: toCleanString(raw.title, "Interview Preparation Plan"),
         matchScore: Math.max(0, Math.min(100, Math.round(Number(raw.matchScore) || 0))),
-        technicalQuestions: ensureMinimumArrayItems(
-            technicalQuestions.slice(0, 8),
-            (index) => ({
-                question: `Technical question ${index + 1}`,
-                intention: "Assess relevant technical knowledge for the role.",
-                answer: "Give a structured, example-driven answer and explain tradeoffs.",
-            }),
-            6
-        ),
-        behavioralQuestions: ensureMinimumArrayItems(
-            behavioralQuestions.slice(0, 6),
-            (index) => ({
-                question: `Behavioral question ${index + 1}`,
-                intention: "Assess communication, ownership, and teamwork.",
-                answer: "Use the STAR format with a concrete example and measurable outcome.",
-            }),
-            4
-        ),
-        skillGaps: ensureMinimumArrayItems(
-            skillGaps.slice(0, 10),
-            (index) => ({
-                skill: `Skill gap ${index + 1}`,
-                severity: "medium",
-            }),
-            4
-        ),
-        preparationPlan: ensureMinimumArrayItems(
-            preparationPlan.slice(0, 10),
-            (index) => ({
-                day: index + 1,
-                focus: `Preparation Focus ${index + 1}`,
-                tasks: ["Review fundamentals", "Practice targeted questions", "Revise project examples"],
-            }),
-            5
-        ).map((item, index) => ({
+        technicalQuestions: technicalQuestions
+            .slice(0, 8)
+            .filter((item) => !isPlaceholderToken(item.question)),
+        behavioralQuestions: behavioralQuestions
+            .slice(0, 6)
+            .filter((item) => !isPlaceholderToken(item.question)),
+        skillGaps: skillGaps
+            .slice(0, 10)
+            .filter((item) => !isPlaceholderToken(item.skill)),
+        preparationPlan: preparationPlan
+            .slice(0, 10)
+            .filter((item) => !isPlaceholderToken(item.focus))
+            .map((item, index) => ({
             ...item,
             day: index + 1,
-            tasks: ensureMinimumArrayItems(
-                item.tasks.slice(0, 5).filter(Boolean),
-                (taskIndex) => `Task ${taskIndex + 1} for day ${index + 1}`,
-                3
-            ),
+            tasks: item.tasks.slice(0, 5).filter(Boolean),
         })),
     }
 }
@@ -269,7 +627,7 @@ function isRetryableAiError(error) {
     return RETRYABLE_STATUS_CODES.has(getStatusCode(error))
 }
 
-async function generateStructuredContent(prompt) {
+async function generateStructuredContent(prompt, responseSchema) {
     let lastError = null
 
     for (const model of AI_MODEL_CANDIDATES) {
@@ -280,7 +638,7 @@ async function generateStructuredContent(prompt) {
                     contents: prompt,
                     config: {
                         responseMimeType: 'application/json',
-                        responseSchema: zodToJsonSchema(interViewReportSchema),
+                        responseSchema: zodToJsonSchema(responseSchema),
                     }
                 })
 
@@ -308,6 +666,69 @@ async function generateStructuredContent(prompt) {
     serviceError.statusCode = 503
     serviceError.cause = lastError
     throw serviceError
+}
+
+async function generatePdfFormHtml(htmlcontent){
+    const browser = await puppeteer.launch()
+    const page = await browser.newPage()
+    await page.setContent(htmlcontent, { waitUntil: 'networkidle0' })
+
+    const pdfBuffer = await page.pdf({ format: 'A4' })
+    await browser.close()
+    return pdfBuffer
+
+}
+
+async function genrateResumePdf({resume,selfDescription,jobDescription}){
+    const resumePdfSchema = z.object({
+        html:z.string().describe("The html contenet of the resume which can be converted to PDF using any libreary like puppeteer")
+         
+    })
+    const prompt = `
+    You are an expert resume writer. Create a polished, job-targeted resume in HTML for PDF export.
+
+    Return ONLY valid JSON with exactly this shape:
+    {
+      "html": "<full HTML document>"
+    }
+
+    Hard rules:
+    - The html field must contain a complete HTML document with <!DOCTYPE html>, html, head, body, and inline CSS.
+    - Do not include markdown, explanations, comments, code fences, scripts, external stylesheets, web fonts, images, or SVG.
+    - The design must be professional, modern, ATS-friendly, and readable when exported to A4 PDF.
+    - Use white background, dark text, strong spacing, subtle borders, and clear headings.
+    - Keep content concise and tailored to the target role.
+    - Do not invent employers, dates, degrees, certifications, or achievements that are not supported by the input.
+    - If the input is incomplete, write honest and strong summary language instead of fabricating facts.
+    - Emphasize role-relevant skills, projects, tools, achievements, and impact.
+
+    Preferred sections:
+    - Header
+    - Professional Summary
+    - Core Skills
+    - Experience or Project Experience
+    - Selected Projects
+    - Education
+
+    Writing rules:
+    - Use sharp bullet points with action verbs.
+    - Focus on measurable impact where supported by the input.
+    - Avoid generic filler and avoid sounding AI-generated.
+    - Optimize the resume specifically for the target job description.
+
+    Candidate resume content:
+    ${resume}
+
+    Candidate self description:
+    ${selfDescription}
+
+    Target job description:
+    ${jobDescription}
+    `
+    const responseText = await generateStructuredContent(prompt, resumePdfSchema)
+    const jsonContent = JSON.parse(responseText)
+    const pdfBuffer = await generatePdfFormHtml(jsonContent.html)
+    return pdfBuffer
 }
 
 
@@ -447,7 +868,7 @@ async function genrateInterviewReport({ resume, selfDescription, jobDescription 
     `;
 
 
-    const responseText = await generateStructuredContent(strictPrompt)
+    const responseText = await generateStructuredContent(strictPrompt, interViewReportSchema)
 
     // try {
     //     const parsed = JSON.parse(response.text);
@@ -461,8 +882,9 @@ async function genrateInterviewReport({ resume, selfDescription, jobDescription 
 
     const parsed = JSON.parse(responseText)
     const normalized = normalizeInterviewReport(parsed)
+    assertReportQuality(normalized)
 
     return interViewReportSchema.parse(normalized)
 }
 
-module.exports = genrateInterviewReport
+module.exports = {genrateInterviewReport,genrateResumePdf}

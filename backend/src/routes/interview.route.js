@@ -27,6 +27,15 @@ interviewRouter.get('/report/:interviewId',authMiddlewear.authUser,interviewCont
  */
 interviewRouter.get("/",authMiddlewear.authUser,interviewController.getAllInterviewReportsController)
 
+/**
+ * @route DELETE /api/interview/report/:interviewId
+ * @description delete interview report by interviewId
+ * @access Private
+ */
+interviewRouter.delete('/report/:interviewId',authMiddlewear.authUser,interviewController.deleteInterviewReportController)
+
+interviewRouter.post('/resume/pdf/:interviewReportId',authMiddlewear.authUser,interviewController.generateResumePdfController)
+
 
 
 module.exports =  interviewRouter
