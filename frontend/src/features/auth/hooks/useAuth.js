@@ -1,6 +1,6 @@
 import { useContext, useEffect } from "react";
-import { AuthContext } from "../auth.context";
-import { login, register, logout, getMe } from "../services/auth.api"
+import { AuthContext } from "../auth.context.js";
+import { login, register, logout, getMe } from "../services/auth.api";
 
 // Hook layer's main task is to maintain the flow
 export const useAuth = () => {
@@ -10,8 +10,8 @@ export const useAuth = () => {
     const handelLogin = async ({ email, password }) => {
         setLoading(true)
         try {
-            const data = await login({ email, password })
-            setUser(data.user)
+            const response = await login({ email, password })
+            setUser(response.user)
             return true
         } catch (error) {
             console.log(error.response?.data?.message || error.message)
@@ -38,7 +38,7 @@ export const useAuth = () => {
     const handelLogout = async () => {
         setLoading(true)
         try {
-            const data = await logout()
+            await logout()
             setUser(null)
         } catch (error) {
             console.log(error);
@@ -48,20 +48,31 @@ export const useAuth = () => {
     }
 
     useEffect(() => {
+        let isMounted = true;
+
         const getAndSetUser = async () => {
             try {
-                
                 const data = await getMe();
-                setUser(data.user);
-            } catch (error) {
-                setUser(null);
+                if (isMounted) {
+                    setUser(data.user);
+                }
+            } catch {
+                if (isMounted) {
+                    setUser(null);
+                }
             } finally {
-                setLoading(false);
+                if (isMounted) {
+                    setLoading(false);
+                }
             }
         };
 
         getAndSetUser();
-    }, []);
+
+        return () => {
+            isMounted = false;
+        };
+    }, [setLoading, setUser]);
 
 
     return { user, loading, handelLogin, handleRegister, handelLogout, }

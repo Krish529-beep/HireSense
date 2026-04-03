@@ -7,6 +7,13 @@ const ai = new GoogleGenAI({
     apiKey: process.env.GOOGLE_GENAI_API_KEY
 });
 
+const AI_MODEL_CANDIDATES = [
+    "gemini-3-flash-preview",
+    "gemini-2.5-flash"
+]
+const MAX_RETRIES_PER_MODEL = 2
+const RETRYABLE_STATUS_CODES = new Set([429, 500, 502, 503, 504])
+
 const interViewReportSchema = z.object({
     matchScore: z.number().describe("A score between 0 and 100 indicating how well the candidate's profile matches the job describe"),
 
@@ -39,8 +46,272 @@ const interViewReportSchema = z.object({
     title: z.string().describe("The title of the job for which the interview report is generated"),
 })
 
+function toCleanString(value, fallback = "") {
+    if (typeof value === "string") {
+        return value.trim()
+    }
 
-async function genrateInterviewReport({ resume, selfdescribe, jobdescribe }) {
+    if (typeof value === "number") {
+        return String(value)
+    }
+
+    if (value == null) {
+        return fallback
+    }
+
+    if (typeof value === "object") {
+        return JSON.stringify(value)
+    }
+
+    return fallback
+}
+
+function tryParseJsonString(value) {
+    if (typeof value !== "string") {
+        return null
+    }
+
+    const trimmed = value.trim()
+    if (!(trimmed.startsWith("{") && trimmed.endsWith("}"))) {
+        return null
+    }
+
+    try {
+        return JSON.parse(trimmed)
+    } catch {
+        return null
+    }
+}
+
+function normalizeQuestionItem(item, index) {
+    const parsedStringObject = tryParseJsonString(item)
+    if (parsedStringObject && typeof parsedStringObject === "object" && !Array.isArray(parsedStringObject)) {
+        return normalizeQuestionItem(parsedStringObject, index)
+    }
+
+    if (item && typeof item === "object" && !Array.isArray(item)) {
+        return {
+            question: toCleanString(item.question, `Question ${index + 1}`),
+            intention: toCleanString(item.intention, "Assess relevant knowledge and communication."),
+            answer: toCleanString(item.answer, "Give a structured answer with clear examples and outcomes."),
+        }
+    }
+
+    const text = toCleanString(item, `Question ${index + 1}`)
+    if (text.includes("|")) {
+        const [question, intention, answer] = text.split("|").map((part) => part.trim())
+        return {
+            question: question || `Question ${index + 1}`,
+            intention: intention || "Assess relevant knowledge and communication.",
+            answer: answer || "Give a structured answer with clear examples and outcomes.",
+        }
+    }
+
+    return {
+        question: text,
+        intention: "Assess relevant knowledge and communication.",
+        answer: "Give a structured answer with clear examples and outcomes.",
+    }
+}
+
+function normalizeSkillGapItem(item) {
+    const parsedStringObject = tryParseJsonString(item)
+    if (parsedStringObject && typeof parsedStringObject === "object" && !Array.isArray(parsedStringObject)) {
+        return normalizeSkillGapItem(parsedStringObject)
+    }
+
+    if (item && typeof item === "object" && !Array.isArray(item)) {
+        const severity = ["low", "medium", "high"].includes(item.severity) ? item.severity : "medium"
+        return {
+            skill: toCleanString(item.skill, "Unspecified skill gap"),
+            severity,
+        }
+    }
+
+    return {
+        skill: toCleanString(item, "Unspecified skill gap"),
+        severity: "medium",
+    }
+}
+
+function normalizePreparationTasks(value) {
+    if (Array.isArray(value)) {
+        return value.map((task) => toCleanString(task)).filter(Boolean)
+    }
+
+    const text = toCleanString(value)
+    if (!text) {
+        return ["Review role-specific fundamentals", "Practice common interview questions", "Prepare concrete project examples"]
+    }
+
+    return text
+        .split(/\r?\n|;|•|-/)
+        .map((task) => task.trim())
+        .filter(Boolean)
+}
+
+function normalizePreparationPlanItem(item, index) {
+    const parsedStringObject = tryParseJsonString(item)
+    if (parsedStringObject && typeof parsedStringObject === "object" && !Array.isArray(parsedStringObject)) {
+        return normalizePreparationPlanItem(parsedStringObject, index)
+    }
+
+    if (item && typeof item === "object" && !Array.isArray(item)) {
+        return {
+            day: Number.isFinite(Number(item.day)) ? Number(item.day) : index + 1,
+            focus: toCleanString(item.focus, `Preparation Focus ${index + 1}`),
+            tasks: normalizePreparationTasks(item.tasks),
+        }
+    }
+
+    const text = toCleanString(item, `Preparation Focus ${index + 1}`)
+    if (text.includes("|")) {
+        const [focus, ...tasks] = text.split("|").map((part) => part.trim()).filter(Boolean)
+        return {
+            day: index + 1,
+            focus: focus || `Preparation Focus ${index + 1}`,
+            tasks: tasks.length > 0 ? tasks : ["Review fundamentals", "Practice answering relevant questions"],
+        }
+    }
+
+    return {
+        day: index + 1,
+        focus: text,
+        tasks: ["Review fundamentals", "Practice answering relevant questions", "Revise examples from past work"],
+    }
+}
+
+function ensureMinimumArrayItems(items, factory, minimumCount) {
+    const result = [...items]
+
+    while (result.length < minimumCount) {
+        result.push(factory(result.length))
+    }
+
+    return result
+}
+
+function normalizeInterviewReport(raw) {
+    const technicalQuestions = Array.isArray(raw.technicalQuestions)
+        ? raw.technicalQuestions.map(normalizeQuestionItem)
+        : []
+
+    const behavioralQuestions = Array.isArray(raw.behavioralQuestions)
+        ? raw.behavioralQuestions.map(normalizeQuestionItem)
+        : []
+
+    const skillGaps = Array.isArray(raw.skillGaps)
+        ? raw.skillGaps.map(normalizeSkillGapItem)
+        : []
+
+    const preparationPlan = Array.isArray(raw.preparationPlan)
+        ? raw.preparationPlan.map(normalizePreparationPlanItem)
+        : []
+
+    return {
+        title: toCleanString(raw.title, "Interview Preparation Plan"),
+        matchScore: Math.max(0, Math.min(100, Math.round(Number(raw.matchScore) || 0))),
+        technicalQuestions: ensureMinimumArrayItems(
+            technicalQuestions.slice(0, 8),
+            (index) => ({
+                question: `Technical question ${index + 1}`,
+                intention: "Assess relevant technical knowledge for the role.",
+                answer: "Give a structured, example-driven answer and explain tradeoffs.",
+            }),
+            6
+        ),
+        behavioralQuestions: ensureMinimumArrayItems(
+            behavioralQuestions.slice(0, 6),
+            (index) => ({
+                question: `Behavioral question ${index + 1}`,
+                intention: "Assess communication, ownership, and teamwork.",
+                answer: "Use the STAR format with a concrete example and measurable outcome.",
+            }),
+            4
+        ),
+        skillGaps: ensureMinimumArrayItems(
+            skillGaps.slice(0, 10),
+            (index) => ({
+                skill: `Skill gap ${index + 1}`,
+                severity: "medium",
+            }),
+            4
+        ),
+        preparationPlan: ensureMinimumArrayItems(
+            preparationPlan.slice(0, 10),
+            (index) => ({
+                day: index + 1,
+                focus: `Preparation Focus ${index + 1}`,
+                tasks: ["Review fundamentals", "Practice targeted questions", "Revise project examples"],
+            }),
+            5
+        ).map((item, index) => ({
+            ...item,
+            day: index + 1,
+            tasks: ensureMinimumArrayItems(
+                item.tasks.slice(0, 5).filter(Boolean),
+                (taskIndex) => `Task ${taskIndex + 1} for day ${index + 1}`,
+                3
+            ),
+        })),
+    }
+}
+
+function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function getStatusCode(error) {
+    return error?.status ?? error?.error?.code ?? error?.cause?.status ?? error?.cause?.error?.code
+}
+
+function isRetryableAiError(error) {
+    return RETRYABLE_STATUS_CODES.has(getStatusCode(error))
+}
+
+async function generateStructuredContent(prompt) {
+    let lastError = null
+
+    for (const model of AI_MODEL_CANDIDATES) {
+        for (let attempt = 1; attempt <= MAX_RETRIES_PER_MODEL; attempt += 1) {
+            try {
+                const response = await ai.models.generateContent({
+                    model,
+                    contents: prompt,
+                    config: {
+                        responseMimeType: 'application/json',
+                        responseSchema: zodToJsonSchema(interViewReportSchema),
+                    }
+                })
+
+                return response.text
+            } catch (error) {
+                lastError = error
+
+                if (!isRetryableAiError(error)) {
+                    throw error
+                }
+
+                const isLastAttemptForModel = attempt === MAX_RETRIES_PER_MODEL
+                const isLastModel = model === AI_MODEL_CANDIDATES[AI_MODEL_CANDIDATES.length - 1]
+
+                if (isLastAttemptForModel && isLastModel) {
+                    break
+                }
+
+                await sleep(1000 * attempt)
+            }
+        }
+    }
+
+    const serviceError = new Error("AI service is temporarily unavailable. Please try again.")
+    serviceError.statusCode = 503
+    serviceError.cause = lastError
+    throw serviceError
+}
+
+
+async function genrateInterviewReport({ resume, selfDescription, jobDescription }) {
 
     const prompt = `
     You are an expert technical recruiter and interview coach. Your ONLY task is to analyze a candidate's profile against a job description and return a structured JSON report.
@@ -101,33 +372,97 @@ async function genrateInterviewReport({ resume, selfdescribe, jobdescribe }) {
     Candidate Profile:
     ${resume}
     Self Description:
-    ${selfdescribe}
+    ${selfDescription}
     Job Description:
-    ${jobdescribe}
+    ${jobDescription}
+    `;
+
+    const strictPrompt = `
+    Return ONLY a valid JSON object.
+
+    Top-level keys required:
+    - title
+    - matchScore
+    - technicalQuestions
+    - behavioralQuestions
+    - skillGaps
+    - preparationPlan
+
+    Rules:
+    - No markdown.
+    - No code fences.
+    - No explanation text.
+    - Every item inside technicalQuestions must be an object with question, intention, answer.
+    - Every item inside behavioralQuestions must be an object with question, intention, answer.
+    - Every item inside skillGaps must be an object with skill, severity.
+    - Every item inside preparationPlan must be an object with day, focus, tasks.
+    - technicalQuestions must contain exactly 6 objects.
+    - behavioralQuestions must contain exactly 4 objects.
+    - skillGaps must contain exactly 4 objects.
+    - preparationPlan must contain exactly 5 objects.
+    - preparationPlan.tasks must contain exactly 3 strings per day.
+    - skillGaps severity must be only low, medium, or high.
+    - preparationPlan day values must be 1, 2, 3, 4, 5.
+    - matchScore must be an integer from 0 to 100.
+
+    Example format:
+    {
+      "title": "Backend Developer",
+      "matchScore": 78,
+      "technicalQuestions": [
+        {
+          "question": "How does JWT authentication work?",
+          "intention": "Check auth fundamentals.",
+          "answer": "Explain token creation, signing, validation, expiry, and a practical flow."
+        }
+      ],
+      "behavioralQuestions": [
+        {
+          "question": "Tell me about a time you handled a difficult bug.",
+          "intention": "Assess ownership and problem-solving.",
+          "answer": "Use STAR and explain your investigation, fix, and outcome."
+        }
+      ],
+      "skillGaps": [
+        {
+          "skill": "System design",
+          "severity": "medium"
+        }
+      ],
+      "preparationPlan": [
+        {
+          "day": 1,
+          "focus": "Authentication basics",
+          "tasks": ["Revise JWT flow", "Practice auth interview questions", "Prepare one project example"]
+        }
+      ]
+    }
+
+    Candidate Profile:
+    ${resume}
+    Self Description:
+    ${selfDescription}
+    Job Description:
+    ${jobDescription}
     `;
 
 
-    const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: prompt,
-        config: {
-            responseMimeType: 'application/json',
-            responseSchema: zodToJsonSchema(interViewReportSchema),
-          
-        }
-    })
+    const responseText = await generateStructuredContent(strictPrompt)
 
-    try {
-        const parsed = JSON.parse(response.text);
-        const validated = interViewReportSchema.parse(parsed);
-        console.log(validated);
-        console.log(parsed);
-    } catch (err) {
-        console.log("❌ Invalid JSON, raw output:");
-        console.log(response.text);
-    }
+    // try {
+    //     const parsed = JSON.parse(response.text);
+    //     const validated = interViewReportSchema.parse(parsed);
+    //     console.log(validated);
+    //     console.log(parsed);
+    // } catch (err) {
+    //     console.log("❌ Invalid JSON, raw output:");
+    //     console.log(response.text);
+    // }
 
-    return parsed
+    const parsed = JSON.parse(responseText)
+    const normalized = normalizeInterviewReport(parsed)
+
+    return interViewReportSchema.parse(normalized)
 }
 
 module.exports = genrateInterviewReport

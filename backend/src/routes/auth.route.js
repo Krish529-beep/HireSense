@@ -1,7 +1,6 @@
 // Auth related routes
 
 const express = require('express')
-const { models } = require('mongoose')
 const authController = require('../controllers/auth.controler.js')
 const authMiddlewear = require('../middlewaers/auth.middlewaer.js')
 

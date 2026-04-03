@@ -1,5 +1,5 @@
 import { useAuth } from "../hooks/useAuth"; 
-import { Navigate, useNavigate } from "react-router";
+import { Navigate } from "react-router";
 
 
 function Protected({children}) {
