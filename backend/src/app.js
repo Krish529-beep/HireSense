@@ -5,16 +5,37 @@ const express = require('express');
 const app = express()
 const cookieParser = require('cookie-parser')
 
+const defaultOrigins = ["http://localhost:5173"];
+const configuredOrigins = (process.env.CLIENT_URL || "")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+const allowedOrigins = [...new Set([...defaultOrigins, ...configuredOrigins])];
+
 app.use(express.json())
+app.use(express.urlencoded({ extended: true }))
 app.use(cookieParser())
+app.set("trust proxy", 1)
 app.use(cors({
-    origin:"http://localhost:5173",
+    origin(origin, callback) {
+        if (!origin || allowedOrigins.includes(origin)) {
+            return callback(null, true)
+        }
+
+        return callback(new Error("CORS origin not allowed"))
+    },
     credentials:true
 }))
 // Require all the routes here 
 const authRouter = require('./routes/auth.route.js')
 const interviewRouter = require('./routes/interview.route.js')
 
+app.get("/api/health", (req, res) => {
+    res.status(200).json({
+        ok: true,
+        message: "Server is healthy"
+    })
+})
 
 // Using all the routes here
 // Learing: Give path correctly

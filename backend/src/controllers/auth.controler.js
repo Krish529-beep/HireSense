@@ -4,6 +4,18 @@ const jwt = require('jsonwebtoken')
 const tokenBlackListModel = require('../models/balcklist.model.js')
 const usermodel = require('../models/user.model.js')
 
+function getCookieOptions() {
+    const isProduction = process.env.NODE_ENV === "production"
+    const sameSite = isProduction ? "none" : "lax"
+
+    return {
+        httpOnly: true,
+        secure: isProduction,
+        sameSite,
+        maxAge: 24 * 60 * 60 * 1000
+    }
+}
+
 /**
  * @name registerUserController
  * @description register new user, expects username,email and password in the request body
@@ -42,7 +54,7 @@ async function registerUserController(req, res) {
         { expiresIn: '1d' }
     )
 
-    res.cookie('token', token)
+    res.cookie('token', token, getCookieOptions())
     res.status(201).json({
         message: "User registered!",
         user: {
@@ -92,11 +104,7 @@ async function loginUserController(req, res) {
         { expiresIn: '1d' }
     )
 
-    res.cookie("token", token, {
-        httpOnly: true,
-        sameSite: "lax",  
-        secure: false      
-    });
+    res.cookie("token", token, getCookieOptions());
     res.status(200).json({
         message: "User loggedIn",
         user: {
@@ -122,7 +130,7 @@ async function logoutUserController(req, res) {
         await tokenBlackListModel.create({ token })
     }
 
-    res.clearCookie('token')
+    res.clearCookie('token', getCookieOptions())
     res.status(200).json({
         message: "User logged out"
     })
