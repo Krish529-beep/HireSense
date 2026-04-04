@@ -2,6 +2,7 @@ import React,{useEffect,useState,useRef} from 'react'
 import "../Style/home.scss"
 import { useInterview } from '../hooks/useInterview'
 import {useNavigate} from 'react-router'
+import { useAuth } from '../../auth/hooks/useAuth'
 
 function getScoreTone(score) {
     if (score >= 80) return "strong"
@@ -17,12 +18,14 @@ function getScoreLabel(score) {
 
 function Home() {
     const {loading,reports,generateReport,getReports,removeReport} = useInterview()
+    const { user, handelLogout } = useAuth()
     const [jobDescription,setjobDescription] = useState("")
     const [selfDescription,setselfDescription] = useState("")
     const [errorMessage, setErrorMessage] = useState("")
     const [recentErrorMessage, setRecentErrorMessage] = useState("")
     const [selectedResumeName, setSelectedResumeName] = useState("")
     const [isGenerating, setIsGenerating] = useState(false)
+    const [isLoggingOut, setIsLoggingOut] = useState(false)
     const resumeInputRef = useRef()
     const navigate = useNavigate()
 
@@ -83,8 +86,33 @@ function Home() {
         }
     }
 
+    const handleLogout = async () => {
+        try {
+            setIsLoggingOut(true)
+            await handelLogout()
+            navigate("/login")
+        } finally {
+            setIsLoggingOut(false)
+        }
+    }
+
     return (
         <main className="home">
+            <section className="session-bar">
+                <div className="session-copy">
+                    <span className="session-kicker">Signed in</span>
+                    <strong>{user?.username || user?.email || "Workspace user"}</strong>
+                </div>
+                <button
+                    type="button"
+                    className="session-action-btn"
+                    onClick={handleLogout}
+                    disabled={isLoggingOut}
+                >
+                    {isLoggingOut ? "Logging out..." : "Logout"}
+                </button>
+            </section>
+
             <section className="hero">
                 <div className="hero-copy">
                     <span className="eyebrow">Interview Prep Studio</span>

@@ -2,6 +2,7 @@ import React, { useState,useEffect } from "react";
 import "../Style/interview.scss";
 import { useInterview, } from "../hooks/useInterview";
 import { useNavigate, useParams } from "react-router";
+import { useAuth } from "../../auth/hooks/useAuth";
 
 const PLACEHOLDER_TOKENS = new Set([
   "question",
@@ -558,6 +559,7 @@ function getScoreLabel(score) {
 
 function Interview() {
   const {report,reports,getReportById,getReports,removeReport,downloadResumePdf} = useInterview()
+  const { user, handelLogout } = useAuth()
   const {interviewId} = useParams()
   const navigate = useNavigate()
   const [errorMessage, setErrorMessage] = useState("");
@@ -566,6 +568,7 @@ function Interview() {
   const [openIndex, setOpenIndex] = useState(0);
   const [isGeneratingResumePdf, setIsGeneratingResumePdf] = useState(false);
   const [resumePdfMessage, setResumePdfMessage] = useState("");
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
 
   useEffect(() => {
     const loadReport = async () => {
@@ -656,6 +659,16 @@ function Interview() {
       );
     } finally {
       setIsGeneratingResumePdf(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      setIsLoggingOut(true);
+      await handelLogout();
+      navigate("/login");
+    } finally {
+      setIsLoggingOut(false);
     }
   };
 
@@ -798,6 +811,20 @@ function Interview() {
             </p>
           </div>
         )}
+        <div className="session-strip">
+          <div className="session-strip-copy">
+            <span className="session-strip-kicker">Signed in</span>
+            <strong>{user?.username || user?.email || "Workspace user"}</strong>
+          </div>
+          <button
+            type="button"
+            className="session-strip-btn"
+            onClick={handleLogout}
+            disabled={isLoggingOut}
+          >
+            {isLoggingOut ? "Logging out..." : "Logout"}
+          </button>
+        </div>
         {isLowMatchScore ? (
           <>
             <div className="low-score-layout">
