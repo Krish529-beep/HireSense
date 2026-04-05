@@ -265,7 +265,7 @@ GOOGLE_GENAI_API_KEY=your-google-genai-api-key
 | Old malformed reports | The frontend tries to normalize and display them safely |
 | Resume PDF generation | Uses AI-generated HTML + Puppeteer PDF export |
 
-<<<<<<< HEAD
+
 ## Future Improvement Ideas
 
 | Area | Possible Next Step |
@@ -277,7 +277,7 @@ GOOGLE_GENAI_API_KEY=your-google-genai-api-key
 | Auth | Add password reset and stronger session controls |
 
 =======
->>>>>>> 60e968c93aabca823abf381b765046badb9c2ca1
+
 ## Known Considerations
 
 | Topic | Note |
