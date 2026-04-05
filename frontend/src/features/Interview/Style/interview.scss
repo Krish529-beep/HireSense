@@ -293,11 +293,46 @@
     margin-bottom: 0.65rem;
   }
 
+  .low-score-layout .recent-report-copy {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    flex: 1;
+  }
+
+  .low-score-layout .recent-report-kicker {
+    display: inline-block;
+    font-size: 0.66rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+
+  .low-score-layout .recent-report-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    flex-shrink: 0;
+  }
+
   .low-score-layout .recent-report-title {
     font-size: 0.84rem;
     line-height: 1.4;
     font-weight: 600;
     color: rgba(255, 255, 255, 0.92);
+    word-break: break-word;
+  }
+
+  .low-score-layout .recent-report-pill {
+    font-size: 0.68rem;
+    padding: 0.34rem 0.58rem;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    color: var(--text-secondary);
   }
 
   .low-score-layout .recent-report-score {
@@ -312,6 +347,14 @@
   .low-score-layout .recent-report-date {
     font-size: 0.75rem;
     color: rgba(255, 255, 255, 0.48);
+  }
+
+  .low-score-layout .recent-report-meta {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.6rem;
+    flex-wrap: wrap;
   }
 
   .error-panel {
@@ -1126,6 +1169,11 @@
       flex-wrap: wrap;
     }
 
+    .low-score-layout .recent-report-actions {
+      width: 100%;
+      justify-content: space-between;
+    }
+
     .recent-report-title,
     .low-score-layout .recent-report-title {
       word-break: break-word;
@@ -1251,6 +1299,21 @@
     .recent-report-score,
     .delete-report-btn {
       font-size: 0.68rem;
+    }
+
+    .low-score-layout .recent-report-kicker {
+      font-size: 0.62rem;
+    }
+
+    .low-score-layout .recent-report-title {
+      font-size: 0.8rem;
+      line-height: 1.45;
+    }
+
+    .low-score-layout .recent-report-meta {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 0.45rem;
     }
 
     .main-content .card .question {

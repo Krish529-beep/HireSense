@@ -148,10 +148,14 @@ input {
   }
 
   .global-ai-note {
-    left: 1rem;
-    right: 1rem;
-    bottom: 0.8rem;
+    left: 0.85rem;
+    right: 0.85rem;
+    bottom: 0.7rem;
     max-width: none;
+    padding: 0.72rem 0.85rem;
+    font-size: 0.74rem;
+    line-height: 1.4;
+    border-radius: 10px;
   }
 }
 
@@ -164,6 +168,16 @@ input {
   .app-loader-spinner {
     width: 40px;
     height: 40px;
+  }
+
+  .global-ai-note {
+    left: 0.7rem;
+    right: 0.7rem;
+    bottom: 0.65rem;
+    padding: 0.65rem 0.75rem;
+    font-size: 0.7rem;
+    line-height: 1.35;
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.22);
   }
 }
 

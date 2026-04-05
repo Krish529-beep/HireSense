@@ -9,9 +9,7 @@ function App() {
       <InterviewProvider>
         <div className="app-shell">
           <RouterProvider router={router}/>
-          <div className="global-ai-note" role="note">
-            AI-generated interview plans can make mistakes. Review the output before relying on it.
-          </div>
+          
         </div>
       </InterviewProvider>
     </AuthProvider>
