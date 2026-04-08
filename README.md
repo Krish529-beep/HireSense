@@ -1,6 +1,6 @@
 # HireSense
 
-HireSense is an AI-powered interview preparation platform that helps users turn a job description and profile details into a practical, role-specific preparation plan. It combines resume parsing, structured interview report generation, skill-gap analysis, behavioral and technical question sets, and a tailored resume PDF flow in one full-stack application.
+HireSense is an AI-powered interview preparation platform that helps users turn a job description and profile details into a practical, role-specific preparation plan. It combines resume parsing, structured interview report generation, skill-gap analysis, behavioral and technical question sets, a report-aware chat assistant, and a tailored resume PDF flow in one full-stack application.
 
 The goal is simple: help candidates prepare faster, with clearer direction and better alignment to the role they want.
 
@@ -25,6 +25,7 @@ HireSense is built as a two-part application:
 | Skill-gap analysis | Highlights the most important missing or weaker areas for the target role |
 | Preparation roadmap | Builds a day-by-day preparation plan with focused tasks |
 | Recent reports | Shows a user’s latest reports and allows revisiting or deleting them |
+| Report-aware interview chat | Lets users chat with an assistant that only answers based on the generated report, uploaded resume, target role, and interview-prep context |
 | Resume PDF generation | Generates a cleaner, role-aligned resume PDF based on the created report |
 | Low-quality response protection | Blocks weak or malformed AI output from being shown as a fake-good report |
 | Mobile-responsive UI | Includes responsive loaders, report views, auth screens, and recent-report layouts |
@@ -36,7 +37,8 @@ HireSense is built as a two-part application:
 3. The backend extracts profile context and sends a structured prompt to the AI model.
 4. The backend validates and normalizes the AI response before saving it.
 5. The frontend shows the report in sections: technical questions, behavioral questions, roadmap, score, and skill gaps.
-6. The user can return to recent reports or generate a tailored resume PDF from a report.
+6. After report generation, the user can open a report-aware chat panel to ask questions about the resume, role, questions, roadmap, and preparation strategy.
+7. The user can return to recent reports or generate a tailored resume PDF from a report.
 
 ## Tech Stack
 
@@ -49,6 +51,7 @@ HireSense is built as a two-part application:
 | PDF Handling | `pdf-parse`, `puppeteer` |
 | Validation | Zod |
 | Auth | JWT + HTTP-only cookies |
+| Contextual chat | Gemini-powered constrained Q&A tied to the generated report |
 
 ## Project Structure
 
@@ -93,6 +96,7 @@ Gen Ai Full Stack/
 | `GET` | `/api/interview` | Fetch all reports for the logged-in user |
 | `GET` | `/api/interview/report/:interviewId` | Fetch one report by ID |
 | `DELETE` | `/api/interview/report/:interviewId` | Delete a saved report |
+| `POST` | `/api/interview/report/:interviewId/chat` | Send a report-aware chat message and get an interview-focused reply |
 | `POST` | `/api/interview/resume/pdf/:interviewReportId` | Generate a tailored resume PDF |
 | `GET` | `/api/health` | Health check for deployments |
 
@@ -138,7 +142,7 @@ Create `backend/.env` using [backend/.env.example](E:/Gen%20Ai%20Full%20Stack/ba
 
 | Variable | Required | Example | Purpose |
 | --- | --- | --- | --- |
-| `PORT` | Yes | `3000` | API server port |
+| `PORT` | Yes | `3001` | API server port |
 | `NODE_ENV` | Yes | `development` or `production` | Runtime mode |
 | `CLIENT_URL` | Yes | `http://localhost:5173` | Allowed frontend origin for CORS and cookies |
 | `MONGO_URI` | Yes | `mongodb+srv://...` | MongoDB connection string |
@@ -148,7 +152,7 @@ Create `backend/.env` using [backend/.env.example](E:/Gen%20Ai%20Full%20Stack/ba
 Example:
 
 ```env
-PORT=3000
+PORT=3001
 NODE_ENV=development
 CLIENT_URL=http://localhost:5173
 MONGO_URI=mongodb+srv://username:password@cluster.mongodb.net/database-name
@@ -162,12 +166,12 @@ Create `frontend/.env` using [frontend/.env.example](E:/Gen%20Ai%20Full%20Stack/
 
 | Variable | Required | Example | Purpose |
 | --- | --- | --- | --- |
-| `VITE_API_URL` | Yes | `http://localhost:3000` | Base URL for the backend API |
+| `VITE_API_URL` | Yes | `http://localhost:3001` | Base URL for the backend API |
 
 Example:
 
 ```env
-VITE_API_URL=http://localhost:3000
+VITE_API_URL=http://localhost:3001
 ```
 
 ## Running the App Locally
@@ -182,7 +186,7 @@ npm run dev
 The backend will run on:
 
 ```text
-http://localhost:3000
+http://localhost:3001
 ```
 
 ### Start the Frontend
@@ -252,7 +256,7 @@ GOOGLE_GENAI_API_KEY=your-google-genai-api-key
 | Area | Notes |
 | --- | --- |
 | Home page | Premium hero section, guided form hierarchy, loading state, recent reports |
-| Interview page | Section navigation, responsive layout, skill-gap summary, roadmap, animated accordions |
+| Interview page | Section navigation, responsive layout, skill-gap summary, roadmap, animated accordions, and a draggable report-aware chat panel |
 | Auth pages | Redesigned login/register flow with branded loading states |
 | Error handling | Clear UI for missing inputs, failed fetches, low-quality AI output, and service unavailability |
 
@@ -263,6 +267,7 @@ GOOGLE_GENAI_API_KEY=your-google-genai-api-key
 | Match score below 50 | Report details are hidden and the user sees guidance instead |
 | AI returns poor-quality output | The backend rejects it instead of saving placeholder junk |
 | Old malformed reports | The frontend tries to normalize and display them safely |
+| Interview chat | The assistant is constrained to the uploaded resume, job description, generated report, and interview-prep context |
 | Resume PDF generation | Uses AI-generated HTML + Puppeteer PDF export |
 
 
