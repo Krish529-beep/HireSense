@@ -2,6 +2,7 @@ import {
     generateInterviewReport,
     deleteInterviewReport,
     generateResumePdf,
+    sendInterviewChatMessage,
     getAllInterviewReports,
     getInterviewReportById
 } from "../services/interview.api.js";
@@ -86,5 +87,18 @@ export const useInterview = () => {
         }
     }, [setLoading])
 
-    return {loading,report,reports,generateReport,getReportById,getReports,removeReport,downloadResumePdf}
+    const sendChatMessage = useCallback(async ({ interviewId, message, messages }) => {
+        setLoading(true)
+        try {
+            const response = await sendInterviewChatMessage({ interviewId, message, messages })
+            return response
+        } catch (err) {
+            console.log(err);
+            throw err
+        } finally {
+            setLoading(false)
+        }
+    }, [setLoading])
+
+    return {loading,report,reports,generateReport,getReportById,getReports,removeReport,downloadResumePdf,sendChatMessage}
 }

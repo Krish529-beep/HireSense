@@ -26,11 +26,6 @@ export async function logout() {
 }
 
 export async function getMe(){
-    try {
-        const response = await api.get('/api/auth/get-me');
-        return response.data;
-    } catch (error) {
-        console.log(error.response?.data?.message || error.message);
-        throw error; 
-    }
+    const response = await api.get('/api/auth/get-me');
+    return response.data;
 }

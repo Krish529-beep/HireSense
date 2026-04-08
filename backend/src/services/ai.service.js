@@ -668,15 +668,84 @@ async function generateStructuredContent(prompt, responseSchema) {
     throw serviceError
 }
 
+async function generateTextContent(prompt) {
+    let lastError = null
+
+    for (const model of AI_MODEL_CANDIDATES) {
+        for (let attempt = 1; attempt <= MAX_RETRIES_PER_MODEL; attempt += 1) {
+            try {
+                const response = await ai.models.generateContent({
+                    model,
+                    contents: prompt,
+                })
+
+                return toCleanString(response.text)
+            } catch (error) {
+                lastError = error
+
+                if (!isRetryableAiError(error)) {
+                    throw error
+                }
+
+                const isLastAttemptForModel = attempt === MAX_RETRIES_PER_MODEL
+                const isLastModel = model === AI_MODEL_CANDIDATES[AI_MODEL_CANDIDATES.length - 1]
+
+                if (isLastAttemptForModel && isLastModel) {
+                    break
+                }
+
+                await sleep(1000 * attempt)
+            }
+        }
+    }
+
+    const serviceError = new Error("AI service is temporarily unavailable. Please try again.")
+    serviceError.statusCode = 503
+    serviceError.cause = lastError
+    throw serviceError
+}
+
 async function generatePdfFormHtml(htmlcontent){
-    const browser = await puppeteer.launch()
-    const page = await browser.newPage()
-    await page.setContent(htmlcontent, { waitUntil: 'networkidle0' })
+    let browser
 
-    const pdfBuffer = await page.pdf({ format: 'A4' })
-    await browser.close()
-    return pdfBuffer
+    try {
+        browser = await puppeteer.launch({
+            headless: true,
+            args: [
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-gpu",
+                "--no-zygote",
+                "--single-process"
+            ]
+        })
 
+        const page = await browser.newPage()
+        await page.setContent(htmlcontent, { waitUntil: "domcontentloaded" })
+
+        const pdfBuffer = await page.pdf({
+            format: "A4",
+            printBackground: true,
+            margin: {
+                top: "16px",
+                right: "16px",
+                bottom: "16px",
+                left: "16px"
+            }
+        })
+
+        return pdfBuffer
+    } catch (error) {
+        const pdfError = new Error("Unable to render resume PDF in the current server environment.")
+        pdfError.statusCode = 500
+        pdfError.cause = error
+        throw pdfError
+    } finally {
+        if (browser) {
+            await browser.close()
+        }
+    }
 }
 
 async function genrateResumePdf({resume,selfDescription,jobDescription}){
@@ -729,6 +798,59 @@ async function genrateResumePdf({resume,selfDescription,jobDescription}){
     const jsonContent = JSON.parse(responseText)
     const pdfBuffer = await generatePdfFormHtml(jsonContent.html)
     return pdfBuffer
+}
+
+async function genrateInterviewChat({ report, resume, selfDescription, jobDescription, messages, userMessage }) {
+    const conversation = Array.isArray(messages)
+        ? messages
+            .filter((item) => item && typeof item === "object")
+            .map((item) => ({
+                role: item.role === "assistant" ? "assistant" : "user",
+                content: toCleanString(item.content)
+            }))
+            .filter((item) => item.content)
+            .slice(-12)
+        : []
+
+    const prompt = `
+    You are HireSense Chat, a focused interview preparation assistant.
+
+    You must ONLY answer questions related to:
+    - the candidate's uploaded resume
+    - the candidate's self description
+    - the target job description
+    - the generated interview report
+    - interview preparation for this specific role
+
+    Rules:
+    - Refuse unrelated questions.
+    - Do not fabricate facts.
+    - If context is missing, say so clearly.
+    - Be practical, concise, and supportive.
+    - Prefer bullet points when giving prep advice.
+    - Keep the reply under 220 words.
+
+    Candidate resume:
+    ${resume || "Not provided"}
+
+    Candidate self description:
+    ${selfDescription || "Not provided"}
+
+    Target job description:
+    ${jobDescription || "Not provided"}
+
+    Generated interview report:
+    ${JSON.stringify(report, null, 2)}
+
+    Recent conversation:
+    ${conversation.map((item) => `${item.role.toUpperCase()}: ${item.content}`).join("\n") || "No prior conversation."}
+
+    User message:
+    ${userMessage}
+    `
+
+    const reply = await generateTextContent(prompt)
+    return reply || "I can help with this report, the target role, and interview preparation based on your resume."
 }
 
 
@@ -887,4 +1009,4 @@ async function genrateInterviewReport({ resume, selfDescription, jobDescription 
     return interViewReportSchema.parse(normalized)
 }
 
-module.exports = {genrateInterviewReport,genrateResumePdf}
+module.exports = {genrateInterviewReport,genrateResumePdf,genrateInterviewChat}

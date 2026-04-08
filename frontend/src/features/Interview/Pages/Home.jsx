@@ -256,11 +256,18 @@ function Home() {
 
                 <div className="reports-grid">
                     {reports.slice(0, 6).map((reportItem) => (
-                        <button
+                        <article
                             key={reportItem._id}
-                            type="button"
                             className="report-card"
+                            role="button"
+                            tabIndex={0}
                             onClick={() => navigate(`/interview/${reportItem._id}`)}
+                            onKeyDown={(event) => {
+                                if (event.key === "Enter" || event.key === " ") {
+                                    event.preventDefault()
+                                    navigate(`/interview/${reportItem._id}`)
+                                }
+                            }}
                         >
                             <div className="report-top">
                                 <div className="report-copy">
@@ -284,7 +291,7 @@ function Home() {
                                     Updated {new Date(reportItem.createdAt).toLocaleDateString()}
                                 </p>
                             </div>
-                        </button>
+                        </article>
                     ))}
                 </div>
             </section>

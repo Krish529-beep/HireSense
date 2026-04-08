@@ -52,3 +52,12 @@ export const generateResumePdf = async ({ interviewId }) => {
         contentDisposition: response.headers["content-disposition"],
     }
 }
+
+export const sendInterviewChatMessage = async ({ interviewId, message, messages }) => {
+    const response = await api.post(`/api/interview/report/${interviewId}/chat`, {
+        message,
+        messages
+    })
+
+    return response.data
+}

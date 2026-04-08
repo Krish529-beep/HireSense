@@ -1,4 +1,4 @@
-import React, { useState,useEffect } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import "../Style/interview.scss";
 import { useInterview, } from "../hooks/useInterview";
 import { useNavigate, useParams } from "react-router";
@@ -231,8 +231,8 @@ function normalizePreparationPlanForUi(planItem, index) {
       tasks: parsedTasks.length > 0
         ? parsedTasks
         : Array.isArray(planItem?.tasks)
-        ? planItem.tasks
-        : [],
+          ? planItem.tasks
+          : [],
     };
   }
 
@@ -248,10 +248,10 @@ function normalizePreparationPlanForUi(planItem, index) {
     tasks: extractedTasks.length > 0
       ? extractedTasks.map((task) => cleanText(task)).filter(Boolean)
       : [
-          "Review role-specific fundamentals",
-          "Practice targeted interview questions",
-          "Revise project examples",
-        ],
+        "Review role-specific fundamentals",
+        "Practice targeted interview questions",
+        "Revise project examples",
+      ],
   };
 }
 
@@ -557,10 +557,19 @@ function getScoreLabel(score) {
   return "Needs stronger alignment";
 }
 
+function getDefaultChatMessages(title) {
+  return [
+    {
+      role: "assistant",
+      content: `Ask me anything about your ${title || "target role"} interview prep, resume, likely questions, skill gaps, or roadmap. I will stay focused on this report.`
+    }
+  ];
+}
+
 function Interview() {
-  const {report,reports,getReportById,getReports,removeReport,downloadResumePdf} = useInterview()
+  const { report, reports, getReportById, getReports, removeReport, downloadResumePdf, sendChatMessage } = useInterview()
   const { user, handelLogout } = useAuth()
-  const {interviewId} = useParams()
+  const { interviewId } = useParams()
   const navigate = useNavigate()
   const [errorMessage, setErrorMessage] = useState("");
   const [recentErrorMessage, setRecentErrorMessage] = useState("");
@@ -569,6 +578,13 @@ function Interview() {
   const [isGeneratingResumePdf, setIsGeneratingResumePdf] = useState(false);
   const [resumePdfMessage, setResumePdfMessage] = useState("");
   const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [chatMessages, setChatMessages] = useState([]);
+  const [chatInput, setChatInput] = useState("");
+  const [chatErrorMessage, setChatErrorMessage] = useState("");
+  const [isChatLoading, setIsChatLoading] = useState(false);
+  const [chatWidth, setChatWidth] = useState(30);
+  const [isDraggingChat, setIsDraggingChat] = useState(false);
+  const chatMessagesRef = useRef(null);
 
   useEffect(() => {
     const loadReport = async () => {
@@ -587,7 +603,7 @@ function Interview() {
     };
 
     loadReport();
-  },[getReportById, interviewId])
+  }, [getReportById, interviewId])
 
   useEffect(() => {
     const loadRecentReports = async () => {
@@ -603,6 +619,56 @@ function Interview() {
 
     loadRecentReports();
   }, [getReports])
+
+  useEffect(() => {
+    if (report?._id) {
+      setChatMessages(getDefaultChatMessages(report.title));
+      setChatInput("");
+      setChatErrorMessage("");
+    }
+  }, [report?._id, report?.title]);
+
+  useEffect(() => {
+    const container = chatMessagesRef.current;
+    if (container) {
+      container.scrollTop = container.scrollHeight;
+    }
+  }, [chatMessages, isChatLoading]);
+
+  useEffect(() => {
+    if (!isDraggingChat) {
+      return undefined;
+    }
+
+    const handlePointerMove = (event) => {
+      const shell = document.querySelector(".interview-shell");
+      if (!shell) {
+        return;
+      }
+
+      const bounds = shell.getBoundingClientRect();
+      const nextWidth = ((bounds.right - event.clientX) / bounds.width) * 100;
+      setChatWidth(Math.max(24, Math.min(38, nextWidth)));
+    };
+
+    const stopDragging = () => {
+      setIsDraggingChat(false);
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
+    };
+
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = "col-resize";
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", stopDragging);
+
+    return () => {
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", stopDragging);
+    };
+  }, [isDraggingChat]);
 
   const handleRetry = async () => {
     if (!interviewId) {
@@ -672,6 +738,51 @@ function Interview() {
     }
   };
 
+  const quickPrompts = useMemo(() => ([
+    "What are the top 3 things I should improve before this interview?",
+    "Ask me a mock technical question from this report.",
+    "How should I explain my resume for this role?",
+    "What should I study first from the roadmap?"
+  ]), []);
+
+  const handleSendChat = async (incomingMessage) => {
+    const nextMessage = typeof incomingMessage === "string" ? incomingMessage.trim() : chatInput.trim();
+
+    if (!nextMessage || !interviewId) {
+      return;
+    }
+
+    const userMessage = { role: "user", content: nextMessage };
+    const nextConversation = [...chatMessages, userMessage];
+
+    setChatMessages(nextConversation);
+    setChatInput("");
+    setChatErrorMessage("");
+    setIsChatLoading(true);
+
+    try {
+      const response = await sendChatMessage({
+        interviewId,
+        message: nextMessage,
+        messages: nextConversation
+      });
+
+      setChatMessages((currentMessages) => [
+        ...currentMessages,
+        {
+          role: "assistant",
+          content: response.reply
+        }
+      ]);
+    } catch (error) {
+      setChatErrorMessage(
+        error.response?.data?.message || "Unable to get a reply right now."
+      );
+    } finally {
+      setIsChatLoading(false);
+    }
+  };
+
   if (errorMessage) {
     return (
       <main className="interview">
@@ -710,8 +821,8 @@ function Interview() {
     activeTab === "technical"
       ? normalizedTechnicalQuestions.length
       : activeTab === "behavioral"
-      ? normalizedBehavioralQuestions.length
-      : normalizedPreparationPlan.length;
+        ? normalizedBehavioralQuestions.length
+        : normalizedPreparationPlan.length;
   const reportLooksReliable =
     normalizedTechnicalQuestions.filter(hasReliableQuestion).length >= 4 &&
     normalizedBehavioralQuestions.filter(hasReliableQuestion).length >= 3 &&
@@ -742,47 +853,48 @@ function Interview() {
       activeTab === "technical"
         ? normalizedTechnicalQuestions
         : activeTab === "behavioral"
-        ? normalizedBehavioralQuestions
-        : [];
+          ? normalizedBehavioralQuestions
+          : [];
 
     // ROADMAP
     if (activeTab === "roadmap") {
       return normalizedPreparationPlan.map((day, i) => {
 
         return (
-        <div key={i} className="card roadmap">
-          <h3>Day {day.day}: {day.focus}</h3>
-          <ul>
-            {day.tasks.map((task, j) => (
-              <li key={j}>{task}</li>
-            ))}
-          </ul>
-        </div>
-      )});
+          <div key={i} className="card roadmap">
+            <h3>Day {day.day}: {day.focus}</h3>
+            <ul>
+              {day.tasks.map((task, j) => (
+                <li key={j}>{task}</li>
+              ))}
+            </ul>
+          </div>
+        )
+      });
     }
 
     // QUESTIONS (ACCORDION)
     return list.map((q, i) => {
 
       return (
-      <div key={i} className={`card ${openIndex === i ? "open" : ""}`}>
+        <div key={i} className={`card ${openIndex === i ? "open" : ""}`}>
 
-        {/* QUESTION HEADER */}
-        <div
-          className="question"
-          onClick={() => setOpenIndex(openIndex === i ? null : i)}
-        >
-          <div className="left">
-            <span className="q-badge">Q{i + 1}</span>
-            <p>{q.question}</p>
+          {/* QUESTION HEADER */}
+          <div
+            className="question"
+            onClick={() => setOpenIndex(openIndex === i ? null : i)}
+          >
+            <div className="left">
+              <span className="q-badge">Q{i + 1}</span>
+              <p>{q.question}</p>
+            </div>
+
+            <span className="arrow">
+              {openIndex === i ? "▴" : "▾"}
+            </span>
           </div>
 
-          <span className="arrow">
-            {openIndex === i ? "▴" : "▾"}
-          </span>
-        </div>
-
-        <div className={`details ${openIndex === i ? "open" : ""}`}>
+          <div className={`details ${openIndex === i ? "open" : ""}`}>
 
             <div className="block">
               <span className="tag intention">INTENTION</span>
@@ -795,12 +907,14 @@ function Interview() {
             </div>
 
           </div>
-      </div>
-    )});
+        </div>
+      )
+    });
   };
 
   return (
     <main className="interview">
+      <div className="interview-shell" style={{ "--chat-width": `${chatWidth}%` }}>
       <div className="interview-container">
         {isGeneratingResumePdf && (
           <div className="resume-loader-overlay" role="status" aria-live="polite">
@@ -875,11 +989,18 @@ function Interview() {
                       .filter((reportItem) => reportItem._id !== interviewId)
                       .slice(0, 6)
                       .map((reportItem) => (
-                        <button
+                        <article
                           key={reportItem._id}
-                          type="button"
                           className="recent-report-card"
+                          role="button"
+                          tabIndex={0}
                           onClick={() => navigate(`/interview/${reportItem._id}`)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter" || event.key === " ") {
+                              event.preventDefault();
+                              navigate(`/interview/${reportItem._id}`);
+                            }
+                          }}
                         >
                           <div className="recent-report-top">
                             <div className="recent-report-copy">
@@ -903,7 +1024,7 @@ function Interview() {
                               Updated {new Date(reportItem.createdAt).toLocaleDateString()}
                             </span>
                           </div>
-                        </button>
+                        </article>
                       ))}
                   </div>
                 )}
@@ -925,201 +1046,294 @@ function Interview() {
         ) : (
           <>
 
-        {/* SIDEBAR */}
-        <div className="sidebar">
-          <p className="section-title">Workspace</p>
-          <div className="sidebar-intro">
-            <span className="sidebar-kicker">Active Report</span>
-            <h3>{report.title}</h3>
-            <p>Move between the key prep sections and keep the report summary in view.</p>
-          </div>
+            {/* SIDEBAR */}
+            <div className="sidebar">
 
-          <button
-            type="button"
-            className={activeTab === "technical" ? "active" : ""}
-            onClick={() => setActiveTab("technical")}
-          >
-            <span className="nav-copy">
-              <strong>Technical Questions</strong>
-              <small>{normalizedTechnicalQuestions.length} prompts</small>
-            </span>
-          </button>
+              {/* TOP */}
+              <div className="sidebar-top">
+                <p className="section-title">Workspace</p>
 
-          <button
-            type="button"
-            className={activeTab === "behavioral" ? "active" : ""}
-            onClick={() => setActiveTab("behavioral")}
-          >
-            <span className="nav-copy">
-              <strong>Behavioral Questions</strong>
-              <small>{normalizedBehavioralQuestions.length} prompts</small>
-            </span>
-          </button>
+                <div className="sidebar-intro">
+                  <span className="sidebar-kicker">Active Report</span>
+                  <h3>{report.title}</h3>
+                  <p>
+                    Move between the key prep sections and keep the report summary in view.
+                  </p>
+                </div>
+              </div>
 
-          <button
-            type="button"
-            className={activeTab === "roadmap" ? "active" : ""}
-            onClick={() => setActiveTab("roadmap")}
-          >
-            <span className="nav-copy">
-              <strong>Roadmap</strong>
-              <small>{normalizedPreparationPlan.length} day plan</small>
-            </span>
-          </button>
+              {/* NAV (scrollable if needed) */}
+              <div className="sidebar-nav">
 
-          <div className="sidebar-tip">
-            Use the score, skill gaps, and roadmap together before applying or generating a tailored resume.
-          </div>
-        </div>
-
-        {/* MAIN CONTENT */}
-        <div className="main-content">
-
-          <div className="header">
-            <div className="header-copy">
-              <span className="header-kicker">Interview Strategy</span>
-              <h2>
-                {activeTab === "technical"
-                  ? "Technical Questions"
-                  : activeTab === "behavioral"
-                  ? "Behavioral Questions"
-                  : "Preparation Roadmap"}
-              </h2>
-              <p>
-                {activeTab === "technical"
-                  ? "Use these prompts to rehearse your strongest technical stories, tradeoffs, and implementation choices."
-                  : activeTab === "behavioral"
-                  ? "Prepare STAR-driven examples that show ownership, clarity, and decision-making."
-                  : "Follow a tighter day-by-day plan to close the biggest fit gaps for this role."}
-              </p>
-            </div>
-
-            <div className="header-actions">
-              <div className="primary-actions">
                 <button
                   type="button"
-                  className="new-report-btn"
-                  onClick={() => navigate("/")}
+                  className={activeTab === "technical" ? "active" : ""}
+                  onClick={() => setActiveTab("technical")}
                 >
-                  Generate Another Report
+                  <span className="nav-copy">
+                    <strong>Technical Questions</strong>
+                    <small>{normalizedTechnicalQuestions.length} prompts</small>
+                  </span>
                 </button>
+
                 <button
                   type="button"
-                  className="secondary-action-btn"
-                  onClick={handleGenerateResumePdf}
-                  disabled={isGeneratingResumePdf}
+                  className={activeTab === "behavioral" ? "active" : ""}
+                  onClick={() => setActiveTab("behavioral")}
                 >
-                  {isGeneratingResumePdf ? "Generating Resume PDF..." : "Generate Resume PDF"}
+                  <span className="nav-copy">
+                    <strong>Behavioral Questions</strong>
+                    <small>{normalizedBehavioralQuestions.length} prompts</small>
+                  </span>
                 </button>
+
+                <button
+                  type="button"
+                  className={activeTab === "roadmap" ? "active" : ""}
+                  onClick={() => setActiveTab("roadmap")}
+                >
+                  <span className="nav-copy">
+                    <strong>Roadmap</strong>
+                    <small>{normalizedPreparationPlan.length} day plan</small>
+                  </span>
+                </button>
+
               </div>
-              <span className="count">
-                {activeItemCount} items
-              </span>
-            </div>
-          </div>
 
-          <div className="content">
-            {resumePdfMessage && (
-              <div className="inline-status-message">{resumePdfMessage}</div>
-            )}
-            {renderContent()}
-          </div>
-
-          <div className="recent-reports-panel">
-            <div className="recent-reports-header">
-              <h3>Recent Reports</h3>
-              <p>Open one of your latest interview plans.</p>
-            </div>
-
-            {recentErrorMessage ? (
-              <div className="recent-reports-empty">{recentErrorMessage}</div>
-            ) : reports.length === 0 ? (
-              <div className="recent-reports-empty">
-                Your recent interview reports will appear here.
+              {/* BOTTOM */}
+              <div className="sidebar-bottom">
+                <div className="sidebar-tip">
+                  Use the score, skill gaps, and roadmap together before applying or generating a tailored resume.
+                </div>
               </div>
-            ) : (
-              <div className="recent-reports-list">
-                {reports
-                  .filter((reportItem) => reportItem._id !== interviewId)
-                  .slice(0, 6)
-                  .map((reportItem) => (
+
+            </div>
+
+            {/* MAIN CONTENT */}
+            <div className="main-content">
+
+              <div className="header">
+                <div className="header-copy">
+                  <span className="header-kicker">Interview Strategy</span>
+                  <h2>
+                    {activeTab === "technical"
+                      ? "Technical Questions"
+                      : activeTab === "behavioral"
+                        ? "Behavioral Questions"
+                        : "Preparation Roadmap"}
+                  </h2>
+                  <p>
+                    {activeTab === "technical"
+                      ? "Use these prompts to rehearse your strongest technical stories, tradeoffs, and implementation choices."
+                      : activeTab === "behavioral"
+                        ? "Prepare STAR-driven examples that show ownership, clarity, and decision-making."
+                        : "Follow a tighter day-by-day plan to close the biggest fit gaps for this role."}
+                  </p>
+                </div>
+
+                <div className="header-actions">
+                  <div className="primary-actions">
                     <button
-                      key={reportItem._id}
                       type="button"
-                    className="recent-report-card"
-                    onClick={() => navigate(`/interview/${reportItem._id}`)}
-                  >
-                    <div className="recent-report-top">
-                        <div className="recent-report-copy">
-                          <span className="recent-report-kicker">Recent role</span>
-                          <span className="recent-report-title">{reportItem.title}</span>
-                        </div>
-                        <div className="recent-report-actions">
-                          <span className={`recent-report-score ${getScoreTone(reportItem.matchScore)}`}>{reportItem.matchScore}%</span>
-                          <button
-                            type="button"
-                            className="delete-report-btn"
-                            onClick={(event) => handleDeleteReport(event, reportItem._id)}
-                          >
-                            Delete
-                          </button>
-                        </div>
-                      </div>
-                      <div className="recent-report-meta">
-                        <span className="recent-report-pill">{getScoreLabel(reportItem.matchScore)}</span>
-                        <span className="recent-report-date">
-                          Updated {new Date(reportItem.createdAt).toLocaleDateString()}
-                        </span>
-                      </div>
+                      className="new-report-btn"
+                      onClick={() => navigate("/")}
+                    >
+                      Generate Another Report
                     </button>
-                  ))}
+                    <button
+                      type="button"
+                      className="secondary-action-btn"
+                      onClick={handleGenerateResumePdf}
+                      disabled={isGeneratingResumePdf}
+                    >
+                      {isGeneratingResumePdf ? "Generating Resume PDF..." : "Generate Resume PDF"}
+                    </button>
+                  </div>
+                  <span className="count">
+                    {activeItemCount} items
+                  </span>
+                </div>
               </div>
-            )}
-          </div>
-        </div>
 
-        {/* RIGHT PANEL */}
-        <div className="right-panel">
-          <div className="summary-card">
-            <span className="summary-kicker">Target Role</span>
-            <h3>{report.title}</h3>
-            <p>{getScoreLabel(report.matchScore)}</p>
-          </div>
+              <div className="content">
+                {resumePdfMessage && (
+                  <div className="inline-status-message">{resumePdfMessage}</div>
+                )}
+                {renderContent()}
+              </div>
 
-          <div className="match-score">
-            <div
-              className="circle"
-              style={{ "--score": report.matchScore }}
-            >
-              <span>{report.matchScore}%</span>
+              <div className="recent-reports-panel">
+                <div className="recent-reports-header">
+                  <h3>Recent Reports</h3>
+                  <p>Open one of your latest interview plans.</p>
+                </div>
+
+                {recentErrorMessage ? (
+                  <div className="recent-reports-empty">{recentErrorMessage}</div>
+                ) : reports.length === 0 ? (
+                  <div className="recent-reports-empty">
+                    Your recent interview reports will appear here.
+                  </div>
+                ) : (
+                  <div className="recent-reports-list">
+                    {reports
+                      .filter((reportItem) => reportItem._id !== interviewId)
+                      .slice(0, 6)
+                      .map((reportItem) => (
+                        <article
+                          key={reportItem._id}
+                          className="recent-report-card"
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => navigate(`/interview/${reportItem._id}`)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter" || event.key === " ") {
+                              event.preventDefault();
+                              navigate(`/interview/${reportItem._id}`);
+                            }
+                          }}
+                        >
+                          <div className="recent-report-top">
+                            <div className="recent-report-copy">
+                              <span className="recent-report-kicker">Recent role</span>
+                              <span className="recent-report-title">{reportItem.title}</span>
+                            </div>
+                            <div className="recent-report-actions">
+                              <span className={`recent-report-score ${getScoreTone(reportItem.matchScore)}`}>{reportItem.matchScore}%</span>
+                              <button
+                                type="button"
+                                className="delete-report-btn"
+                                onClick={(event) => handleDeleteReport(event, reportItem._id)}
+                              >
+                                Delete
+                              </button>
+                            </div>
+                          </div>
+                          <div className="recent-report-meta">
+                            <span className="recent-report-pill">{getScoreLabel(reportItem.matchScore)}</span>
+                            <span className="recent-report-date">
+                              Updated {new Date(reportItem.createdAt).toLocaleDateString()}
+                            </span>
+                          </div>
+                        </article>
+                      ))}
+                  </div>
+                )}
+              </div>
             </div>
-            <p className="label">Match Score</p>
-          </div>
 
-          <div className="skills">
-            <div className="skills-header">
-              <p className="title">Skill Gaps</p>
-              <span className="skills-count">{normalizedSkillGaps.length} focus areas</span>
+            {/* RIGHT PANEL */}
+            <div className="right-panel">
+              <div className="summary-card">
+                <span className="summary-kicker">Target Role</span>
+                <h3>{report.title}</h3>
+                <p>{getScoreLabel(report.matchScore)}</p>
+              </div>
+
+              <div className="match-score">
+                <div
+                  className="circle"
+                  style={{ "--score": report.matchScore }}
+                >
+                  <span>{report.matchScore}%</span>
+                </div>
+                <p className="label">Match Score</p>
+              </div>
+
+              <div className="skills">
+                <div className="skills-header">
+                  <p className="title">Skill Gaps</p>
+                  <span className="skills-count">{normalizedSkillGaps.length} focus areas</span>
+                </div>
+
+                <div className="tags">
+                  {normalizedSkillGaps.map((s, i) => {
+                    return (
+                      <span key={i} className={s.severity}>
+                        {s.skill}
+                      </span>
+                    )
+                  })}
+                </div>
+              </div>
+
+              <div className="summary-card compact">
+                <span className="summary-kicker">How To Use This</span>
+                <p>Review the score, study the gaps, rehearse the questions, then use the roadmap to close your weakest areas.</p>
+              </div>
+
             </div>
-
-            <div className="tags">
-              {normalizedSkillGaps.map((s, i) => {
-                return (
-                <span key={i} className={s.severity}>
-                  {s.skill}
-                </span>
-              )})}
-            </div>
-          </div>
-
-          <div className="summary-card compact">
-            <span className="summary-kicker">How To Use This</span>
-            <p>Review the score, study the gaps, rehearse the questions, then use the roadmap to close your weakest areas.</p>
-          </div>
-
-        </div>
           </>
         )}
+      </div>
+      <div
+        className={`chat-resizer ${isDraggingChat ? "dragging" : ""}`}
+        onPointerDown={() => setIsDraggingChat(true)}
+        aria-hidden="true"
+      />
+      <aside className="chat-panel">
+        <div className="chat-panel-header">
+          <div>
+            <span className="chat-kicker">Interview Chat</span>
+            <h3>Report-aware assistant</h3>
+            <p>Ask about this report, your resume, the target role, or how to prepare better.</p>
+          </div>
+        </div>
+
+        <div className="chat-quick-actions">
+          {quickPrompts.map((prompt) => (
+            <button
+              key={prompt}
+              type="button"
+              className="chat-quick-btn"
+              onClick={() => handleSendChat(prompt)}
+              disabled={isChatLoading}
+            >
+              {prompt}
+            </button>
+          ))}
+        </div>
+
+        <div className="chat-messages" ref={chatMessagesRef}>
+          {chatMessages.map((item, index) => (
+            <div key={`${item.role}-${index}`} className={`chat-bubble ${item.role}`}>
+              <span className="chat-role">{item.role === "assistant" ? "HireSense Chat" : "You"}</span>
+              <p>{item.content}</p>
+            </div>
+          ))}
+
+          {isChatLoading && (
+            <div className="chat-bubble assistant loading">
+              <span className="chat-role">HireSense Chat</span>
+              <p>Thinking through your report...</p>
+            </div>
+          )}
+        </div>
+
+        {chatErrorMessage && (
+          <div className="chat-error" role="alert">
+            {chatErrorMessage}
+          </div>
+        )}
+
+        <form
+          className="chat-composer"
+          onSubmit={(event) => {
+            event.preventDefault();
+            handleSendChat();
+          }}
+        >
+          <textarea
+            value={chatInput}
+            onChange={(event) => setChatInput(event.target.value)}
+            placeholder="Ask about your resume, likely interview questions, skill gaps, or roadmap..."
+            rows={3}
+          />
+          <button type="submit" disabled={isChatLoading || !chatInput.trim()}>
+            {isChatLoading ? "Sending..." : "Send"}
+          </button>
+        </form>
+      </aside>
       </div>
     </main>
   );

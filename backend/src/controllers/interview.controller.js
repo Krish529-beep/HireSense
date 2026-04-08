@@ -1,5 +1,5 @@
 const pdfParse = require('pdf-parse')
-const {genrateInterviewReport,genrateResumePdf} = require('../services/ai.service.js')
+const {genrateInterviewReport,genrateResumePdf,genrateInterviewChat} = require('../services/ai.service.js')
 const interviewReportModel = require('../models/interviewReport.model.js')
 
 async function generateInterviewReportController(req,res) {
@@ -155,4 +155,62 @@ async function generateResumePdfController(req,res) {
 
 }
 
-module.exports = {generateInterviewReportController,getInterviewReportByIdController,getAllInterviewReportsController,deleteInterviewReportController,generateResumePdfController}
+async function generateInterviewChatController(req,res) {
+    try {
+        const {interviewId} = req.params
+        const {message, messages} = req.body
+
+        if (!message?.trim()) {
+            return res.status(400).json({
+                message:"Chat message is required"
+            })
+        }
+
+        const interviewReport = await interviewReportModel.findOne({
+            _id: interviewId,
+            user: req.user.id
+        })
+
+        if(!interviewReport){
+            return res.status(404).json({
+                message:"Interview report not found"
+            })
+        }
+
+        const reply = await genrateInterviewChat({
+            report: {
+                title: interviewReport.title,
+                matchScore: interviewReport.matchScore,
+                technicalQuestions: interviewReport.technicalQuestions,
+                behavioralQuestions: interviewReport.behavioralQuestions,
+                skillGaps: interviewReport.skillGaps,
+                preparationPlan: interviewReport.preparationPlan
+            },
+            resume: interviewReport.resume,
+            selfDescription: interviewReport.selfDescription,
+            jobDescription: interviewReport.jobDescription,
+            messages,
+            userMessage: message.trim()
+        })
+
+        return res.status(200).json({
+            message:"Interview chat reply generated successfully",
+            reply
+        })
+    } catch (error) {
+        console.error("Interview chat failed:", error.message)
+
+        if (error.cause) {
+            console.error("AI provider error:", error.cause)
+        }
+
+        const statusCode = error.statusCode || 500
+        const message = statusCode === 503
+            ? "AI service is busy right now. Please retry in a moment."
+            : "Failed to generate chat reply."
+
+        return res.status(statusCode).json({ message })
+    }
+}
+
+module.exports = {generateInterviewReportController,getInterviewReportByIdController,getAllInterviewReportsController,deleteInterviewReportController,generateResumePdfController,generateInterviewChatController}

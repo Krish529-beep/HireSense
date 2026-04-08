@@ -35,6 +35,7 @@ interviewRouter.get("/",authMiddlewear.authUser,interviewController.getAllInterv
 interviewRouter.delete('/report/:interviewId',authMiddlewear.authUser,interviewController.deleteInterviewReportController)
 
 interviewRouter.post('/resume/pdf/:interviewReportId',authMiddlewear.authUser,interviewController.generateResumePdfController)
+interviewRouter.post('/report/:interviewId/chat',authMiddlewear.authUser,interviewController.generateInterviewChatController)
 
 
 
