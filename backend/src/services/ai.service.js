@@ -748,6 +748,118 @@ async function generatePdfFormHtml(htmlcontent){
     }
 }
 
+function stripHtmlForPdf(html) {
+    return toCleanString(html)
+        .replace(/<style[\s\S]*?<\/style>/gi, "")
+        .replace(/<script[\s\S]*?<\/script>/gi, "")
+        .replace(/<\/(h1|h2|h3|p|li|div|section|header)>/gi, "\n")
+        .replace(/<li[^>]*>/gi, "• ")
+        .replace(/<[^>]+>/g, "")
+        .replace(/&nbsp;/g, " ")
+        .replace(/&amp;/g, "&")
+        .replace(/&lt;/g, "<")
+        .replace(/&gt;/g, ">")
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim()
+}
+
+function escapePdfText(text) {
+    return toCleanString(text)
+        .replace(/\\/g, "\\\\")
+        .replace(/\(/g, "\\(")
+        .replace(/\)/g, "\\)")
+        .replace(/[^\x09\x0A\x0D\x20-\x7E]/g, "")
+}
+
+function wrapPdfLine(line, maxLength = 92) {
+    const words = toCleanString(line).split(/\s+/).filter(Boolean)
+    const lines = []
+    let currentLine = ""
+
+    words.forEach((word) => {
+        const nextLine = currentLine ? `${currentLine} ${word}` : word
+
+        if (nextLine.length > maxLength && currentLine) {
+            lines.push(currentLine)
+            currentLine = word
+            return
+        }
+
+        currentLine = nextLine
+    })
+
+    if (currentLine) {
+        lines.push(currentLine)
+    }
+
+    return lines.length > 0 ? lines : [""]
+}
+
+function createSimplePdfBuffer(text) {
+    const sourceLines = toCleanString(text, "Resume content was unavailable.")
+        .split(/\r?\n/)
+        .flatMap((line) => wrapPdfLine(line))
+
+    const linesPerPage = 46
+    const pages = []
+
+    for (let index = 0; index < sourceLines.length; index += linesPerPage) {
+        pages.push(sourceLines.slice(index, index + linesPerPage))
+    }
+
+    if (pages.length === 0) {
+        pages.push(["Resume content was unavailable."])
+    }
+
+    const objects = []
+    const addObject = (content) => {
+        objects.push(content)
+        return objects.length
+    }
+
+    const catalogId = addObject("<< /Type /Catalog /Pages 2 0 R >>")
+    const pagesId = addObject("")
+    const fontId = addObject("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+    const pageIds = []
+
+    pages.forEach((pageLines) => {
+        const content = [
+            "BT",
+            "/F1 10 Tf",
+            "50 800 Td",
+            "14 TL",
+            ...pageLines.map((line) => `(${escapePdfText(line)}) Tj T*`),
+            "ET"
+        ].join("\n")
+
+        const contentId = addObject(`<< /Length ${Buffer.byteLength(content)} >>\nstream\n${content}\nendstream`)
+        const pageId = addObject(`<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 ${fontId} 0 R >> >> /Contents ${contentId} 0 R >>`)
+        pageIds.push(pageId)
+    })
+
+    objects[pagesId - 1] = `<< /Type /Pages /Kids [${pageIds.map((id) => `${id} 0 R`).join(" ")}] /Count ${pageIds.length} >>`
+
+    let pdf = "%PDF-1.4\n"
+    const offsets = [0]
+
+    objects.forEach((content, index) => {
+        offsets.push(Buffer.byteLength(pdf))
+        pdf += `${index + 1} 0 obj\n${content}\nendobj\n`
+    })
+
+    const xrefOffset = Buffer.byteLength(pdf)
+    pdf += `xref\n0 ${objects.length + 1}\n`
+    pdf += "0000000000 65535 f \n"
+    offsets.slice(1).forEach((offset) => {
+        pdf += `${String(offset).padStart(10, "0")} 00000 n \n`
+    })
+    pdf += `trailer\n<< /Size ${objects.length + 1} /Root ${catalogId} 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`
+
+    return Buffer.from(pdf, "utf8")
+}
+
 async function genrateResumePdf({resume,selfDescription,jobDescription}){
     const resumePdfSchema = z.object({
         html:z.string().describe("The html contenet of the resume which can be converted to PDF using any libreary like puppeteer")
@@ -796,8 +908,26 @@ async function genrateResumePdf({resume,selfDescription,jobDescription}){
     `
     const responseText = await generateStructuredContent(prompt, resumePdfSchema)
     const jsonContent = JSON.parse(responseText)
-    const pdfBuffer = await generatePdfFormHtml(jsonContent.html)
-    return pdfBuffer
+    try {
+        const pdfBuffer = await generatePdfFormHtml(jsonContent.html)
+        return pdfBuffer
+    } catch (error) {
+        console.error("Puppeteer PDF rendering failed, using fallback PDF:", error.message)
+        const fallbackText = stripHtmlForPdf(jsonContent.html) || [
+            "Tailored Resume",
+            "",
+            "Resume Content:",
+            resume || "Not provided",
+            "",
+            "Self Description:",
+            selfDescription || "Not provided",
+            "",
+            "Target Job Description:",
+            jobDescription || "Not provided"
+        ].join("\n")
+
+        return createSimplePdfBuffer(fallbackText)
+    }
 }
 
 async function genrateInterviewChat({ report, resume, selfDescription, jobDescription, messages, userMessage }) {
