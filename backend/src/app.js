@@ -18,6 +18,15 @@ const configuredOrigins = (process.env.CLIENT_URL || "")
 const allowedOrigins = [...new Set([...defaultOrigins, ...configuredOrigins])];
 const isDevelopment = process.env.NODE_ENV !== "production";
 
+function isVercelOrigin(origin) {
+    try {
+        const { protocol, hostname } = new URL(origin)
+        return protocol === "https:" && hostname.endsWith(".vercel.app")
+    } catch {
+        return false
+    }
+}
+
 function isAllowedOrigin(origin) {
     if (!origin) {
         return true
@@ -31,7 +40,7 @@ function isAllowedOrigin(origin) {
         return /^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin)
     }
 
-    return false
+    return isVercelOrigin(origin)
 }
 
 const corsOptions = {
